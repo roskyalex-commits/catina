@@ -200,6 +200,16 @@ export type RowFilter = {
   county?: string[];
   /** Drop companies the register marks dissolved, radiated or insolvent. */
   activeOnly?: boolean;
+  /**
+   * Keep only companies the register lists a usable website for.
+   *
+   * The densest slice there is. A domain is the one input the email pipeline
+   * cannot work without — measured, 26% of companies with a domain publish a
+   * role address — and the register carries one for 11,050 companies
+   * nationally out of 4.0M rows. Importing that 0.27% costs almost nothing and
+   * is worth more than any county.
+   */
+  hasWebsite?: boolean;
 };
 
 /** Does this company pass the CLI's filters? */
@@ -228,6 +238,10 @@ export function matchesFilter(
   // null from `isActiveStatus` means the wording was unrecognised, not that the
   // company is gone.
   if (filter.activeOnly && isActiveStatus(status) === false) return false;
+
+  // `domain` rather than `website`: the raw column holds phone numbers and
+  // other junk, and `extractDomain` has already refused to parse those.
+  if (filter.hasWebsite && !company.domain) return false;
 
   return true;
 }

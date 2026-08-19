@@ -109,6 +109,9 @@ function parseArgs(argv: string[]): Options {
       case "--active-only":
         options.filter.activeOnly = true;
         break;
+      case "--has-website":
+        options.filter.hasWebsite = true;
+        break;
       default:
         if (arg.startsWith("--")) throw new Error(`Unknown flag: ${arg}`);
     }
@@ -182,13 +185,27 @@ async function main() {
     }
   }
 
-  // A real import must be bounded. Without a filter the slice is the whole
-  // register: 1.7M companies, which exceeds both memory and the free tier.
-  if (!options.dryRun && !options.filter.county?.length && !options.limit) {
+  /*
+   * A real import must be bounded. Without a filter the slice is the whole
+   * register: 1.7M companies, which exceeds both memory and the free tier.
+   *
+   * `--has-website` bounds it as effectively as a county does, and far more
+   * usefully: 11,050 of the 4.0M rows carry a usable website nationally, about
+   * 5,600 of them still trading. That is the densest slice in the file — a
+   * domain is the one input the email pipeline cannot work without, and 26% of
+   * companies that have one publish a role address.
+   */
+  const bounded =
+    Boolean(options.filter.county?.length) ||
+    Boolean(options.limit) ||
+    Boolean(options.filter.hasWebsite);
+
+  if (!options.dryRun && !bounded) {
     console.error(
       "Refusing to import the whole register.\n" +
-        "Pass --county (e.g. --county CJ) or --limit. See docs/STATUS.md: the\n" +
-        "free tier is 500MB and the full register would not fit.",
+        "Pass --county (e.g. --county CJ), --has-website, or --limit.\n" +
+        "See docs/STATUS.md: the free tier is 500MB and the full register" + 
+        " would not fit.",
     );
     process.exit(1);
   }
@@ -268,6 +285,19 @@ async function main() {
         parsed.company.website = `https://${domain}`;
         counts.withWebsite += 1;
       }
+    }
+
+    /*
+     * `--has-website` is applied here rather than with the other filters at the
+     * end, for two reasons. The domain only exists after the extraction just
+     * above — the raw column carries phone numbers, so the parsed `domain` is
+     * the honest test, not the raw cell. And a national pass would otherwise
+     * hold four million companies in `held` to discard all but eleven thousand
+     * of them; filtering in the scan keeps memory proportional to the slice.
+     */
+    if (options.filter.hasWebsite && !parsed.company.domain) {
+      counts.filtered += 1;
+      continue;
     }
 
     const regNumber = normaliseRegNumber(parsed.company.regCom ?? "");

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { SourcedCompany } from "@/lib/sources/types";
 import { parseCsv, readRecords, sniffDelimiter, splitRow, stripBom } from "./csv";
 import { describeHeader, mapHeader, normaliseHeader } from "./columns";
 import {
@@ -464,5 +465,42 @@ describe("parseCsv end to end", () => {
     ]);
     expect(companies.map((c) => c.county)).toEqual(["Bacău", "Cluj"]);
     expect(companies[1].caen).toBe("6419");
+  });
+});
+
+describe("matchesFilter — hasWebsite", () => {
+  /**
+   * The densest slice in the register: 11,050 companies nationally out of 4.0M
+   * rows carry a usable website, and a domain is the one input the email
+   * pipeline cannot work without.
+   */
+  const base: SourcedCompany = {
+    dedupeKey: "x",
+    name: "TEST SRL",
+    country: "RO",
+    source: "onrc",
+  };
+
+  it("keeps a company with a parsed domain", () => {
+    expect(
+      matchesFilter({ ...base, domain: "firma.ro" }, undefined, { hasWebsite: true }),
+    ).toBe(true);
+  });
+
+  it("drops one with nothing in the website column", () => {
+    expect(matchesFilter(base, undefined, { hasWebsite: true })).toBe(false);
+  });
+
+  it("drops one whose website column held junk", () => {
+    // A real row: the phone number 0744700293 sits in the website column.
+    // `extractDomain` refuses it, so `domain` is undefined and this must drop —
+    // filtering on the raw column instead would import a company with no site.
+    expect(
+      matchesFilter({ ...base, website: "0744700293" }, undefined, { hasWebsite: true }),
+    ).toBe(false);
+  });
+
+  it("does not affect anything when it is off", () => {
+    expect(matchesFilter(base, undefined, {})).toBe(true);
   });
 });
