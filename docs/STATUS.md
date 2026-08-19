@@ -6,7 +6,7 @@ re-explained or re-derived. Update it when the answers change.
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
 - **Last commit:** `6ded9e6` — the email waterfall is connected and leads now
   carry addresses.
-- **Green:** 642 tests, clean `typecheck` and `lint`.
+- **Green:** 662 tests, clean `typecheck` and `lint`.
 - **Steps 1–4 are done and visible.** Sourcing produces scored leads from the
   real registry, and `/app` renders them — 758 leads for one agent over the
   Cluj slice. The database holds **11,597 Cluj companies**, **11,438**
@@ -149,6 +149,7 @@ Neither substitutes for the other, and the second still gates a real user.
 | Role-address harvesting from prospect sites | **Verified** — 37 of 140 domains (26.4%), no key and no quota |
 | `POST /api/v1/leads/[id]/enrich` | **Written, not driven by a browser** — the bulk script shares its orchestration and persistence |
 | Domain discovery by name-guessing | **Verified as ineffective** — 0 of 55 on the live run, and the reason is structural |
+| Brave Search / domain-search | **From documentation, never run.** Needs `BRAVE_SEARCH_API_KEY`; `BraveSearch.probe()` prints the raw payload |
 | Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
 | Claude ICP inference end to end | **Never run** with a real key |
 | Gmail send | Routes not written yet |
@@ -306,11 +307,28 @@ has rows.
    ~0.26 of an email. Name-guessing is measured dead (see the landmine); the
    structural reason is that a Romanian company's legal name is often not its
    brand, and **a search engine already knows that association**.
-   `BRAVE_SEARCH_API_KEY` is declared in `env.ts` and wired to nothing; the free
-   tier is ~2,000 queries/month. Query `"<name>" <county> <CUI>`, take the top
-   results as candidates, and **verify with `pageMentionsCui`, which already
-   exists** — the verifier was always the sound half. Measure candidate recall
-   and CUI-proof rate against the 140 known-domain companies before believing it.
+   **Built and waiting on a key.** `src/lib/enrichment/domain-search.ts` plus
+   `--search` / `--measure` on `npm run discover:domains`. All of it is unit
+   tested; none of it has run, because `BRAVE_SEARCH_API_KEY` is not set. Get a
+   free key at <https://brave.com/search/api/> — 2,000 queries a month,
+   commercial use permitted — put it in `.env.local`, then:
+
+   ```bash
+   npm run discover:domains -- --measure --limit 60
+   ```
+
+   That runs against companies whose domain the register **already** carries,
+   so the right answer is known before the query is sent, and reports two
+   numbers: recall (search proposed the right domain — the ceiling) and
+   CUI-provable (the verifier would accept it — what a bulk run yields).
+   Name guessing scored 47% recall and **0 accepted** on that same test.
+   Only run the bulk pass if the second number is worth the quota.
+
+   The load-bearing part is not the API, it is `AGGREGATOR_DOMAINS`: Romanian
+   company-data sites (listafirme.ro, termene.ro, risco.ro and a dozen more)
+   exist to rank first for exactly this query, and **every one of them publishes
+   the fiscal code** — so the CUI check, which is otherwise proof of ownership,
+   would confirm listafirme.ro as the website of all 11,597 companies.
 
    **5c — vendor fallback, metered.** Run the decision gate that was written for
    exactly this and has never run: `npm run spike:people -- --markets ro`. It
@@ -438,6 +456,13 @@ unsubscribe endpoint, Copilot.
   code on its own site, so `pageMentionsCui` is proof of ownership and is
   reusable for candidates from any source. The next attempt should get its
   candidates from a search API, which already knows the brand↔company link.
+- **Searching for a Romanian company returns registry aggregators, not the
+  company.** listafirme.ro, termene.ro, risco.ro, confidas.ro, mfinante and a
+  dozen more exist to rank for "<company name> CUI", and they all display the
+  fiscal code — so `pageMentionsCui`, which is proof of ownership for a real
+  company site, waves every one of them through. `AGGREGATOR_DOMAINS` in
+  `src/lib/enrichment/domain-search.ts` is what makes search viable at all; it
+  is not a quality filter and must not be trimmed for tidiness.
 - **A name match is not evidence.** The first version accepted a domain when the
   page contained the company name, and produced `business.com` for Z BUSINESS
   SRL and `all.ro` for ALL BEFORE SRL. The name is what the candidate was

@@ -1,27 +1,37 @@
 /**
  * Finds websites for companies the register has no domain for.
  *
- *   npm run discover:domains -- --limit 50 --dry-run
- *   npm run discover:domains -- --limit 500
+ *   npm run discover:domains -- --search --limit 50 --dry-run
+ *   npm run discover:domains -- --search --limit 500
+ *   npm run discover:domains -- --measure --limit 60   # is search worth it?
+ *   npm run discover:domains -- --limit 50             # name guessing (dead)
  *
- * ONRC carries a website for about 1% of companies, and a domain is what
- * unlocks email inference, crawling, tech-stack fingerprinting and pricing
- * signals. This closes that gap without a vendor.
+ * ONRC carries a website for about 1% of companies. A domain is the only input
+ * the email pipeline is short of — enrichment converts at 26% once it has one —
+ * so this script is, in effect, the top of the email funnel.
  *
- * Guess, then prove:
+ * Two candidate sources, one verifier:
  *
- *   1. candidate domains from the company name (pure, tested)
- *   2. a DNS lookup to discard the ones that do not exist
- *   3. fetch the page and look for the company's **CUI**
+ *   1a. **search** (`--search`): ask Brave for the company. Costs a query from
+ *       a 2,000/month free tier.
+ *   1b. **name guessing** (default): derive candidates from the company name.
+ *       Kept for reference and **measured dead** — 0 of 55 on the live run.
+ *       A Romanian company's legal name is frequently not its brand, and no
+ *       string manipulation recovers an association that is not in the string.
+ *   2.  a DNS lookup to discard candidates that do not exist
+ *   3.  fetch the page and look for the company's **CUI**
  *
- * Step 3 is what makes it safe. A Romanian company must publish its fiscal
- * code on its own website, so finding that exact number is proof of ownership.
- * Without it, "the domain looks like the name" would happily attribute a
- * squatter's parking page — or a competitor — to your prospect, and a wrong
- * domain is worse than none: it poisons the email guess, the tech stack and
- * every signal derived from them.
+ * Step 3 is what makes either source safe. A Romanian company must publish its
+ * fiscal code on its own website, so finding that exact number is proof of
+ * ownership. Without it, "the domain looks like the name" would happily
+ * attribute a squatter's parking page — or a competitor — to your prospect,
+ * and a wrong domain is worse than none: it poisons the email guess, the tech
+ * stack and every signal derived from them.
  *
- * Free and unmetered. The only cost is time, so it is politely rate limited.
+ * `--measure` answers "is search worth the quota" before spending it in bulk:
+ * it runs against companies whose domain we **already know** from the register
+ * and reports how often search proposes the right one. Recall measured this way
+ * is the honest ceiling for the bulk run.
  */
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -31,17 +41,32 @@ import {
   pageMentionsName,
   verifyDomain,
 } from "@/lib/enrichment/domain-guess";
+import {
+  BraveSearch,
+  candidatesFromResults,
+  searchQueries,
+} from "@/lib/enrichment/domain-search";
 import { requireEnv } from "./load-env";
 
 const PAGE = 1000;
 const FETCH_TIMEOUT_MS = 8000;
 const CONCURRENCY = 6;
 const DOH = "https://cloudflare-dns.com/dns-query";
+/** Brave's free tier is one query per second; exceeding it returns 429. */
+const BRAVE_PACE_MS = 1100;
 
-type Options = { limit?: number; dryRun: boolean; county?: string };
+type Options = {
+  limit?: number;
+  dryRun: boolean;
+  county?: string;
+  /** Take candidates from a search engine instead of the company name. */
+  search: boolean;
+  /** Score the candidate source against domains we already know. */
+  measure: boolean;
+};
 
 function parseArgs(argv: string[]): Options {
-  const options: Options = { dryRun: false };
+  const options: Options = { dryRun: false, search: false, measure: false };
   for (let i = 0; i < argv.length; i += 1) {
     const next = () => argv[(i += 1)];
     switch (argv[i]) {
@@ -53,6 +78,13 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--dry-run":
         options.dryRun = true;
+        break;
+      case "--search":
+        options.search = true;
+        break;
+      case "--measure":
+        options.measure = true;
+        options.search = true;
         break;
       default:
         if (argv[i].startsWith("--")) throw new Error(`Unknown flag: ${argv[i]}`);
@@ -113,7 +145,40 @@ async function fetchPage(domain: string): Promise<string | null> {
   return null;
 }
 
-type Company = { id: string; name: string; cui: string };
+type Company = { id: string; name: string; cui: string; county?: string | null };
+
+const brave = new BraveSearch(process.env.BRAVE_SEARCH_API_KEY);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Candidate domains for a company, from whichever source is selected.
+ *
+ * Search is serialised and paced: Brave's free tier is one query per second,
+ * and the concurrency that makes the DNS and fetch steps fast is exactly what
+ * trips it. Only the first query is run per company unless it yields nothing —
+ * 2,000 queries a month does not stretch to three per company.
+ */
+async function candidatesFor(
+  company: Company,
+  options: Options,
+): Promise<{ domain: string }[]> {
+  if (!options.search) return candidateDomains(company.name);
+
+  for (const query of searchQueries(company)) {
+    let results;
+    try {
+      results = await brave.search(query);
+    } catch (error) {
+      console.error(`\n  search failed for ${company.name}: ${error instanceof Error ? error.message : error}`);
+      return [];
+    }
+    await sleep(BRAVE_PACE_MS);
+
+    const candidates = candidatesFromResults(results, 4);
+    if (candidates.length > 0) return candidates;
+  }
+  return [];
+}
 
 type Found = {
   id: string;
@@ -123,11 +188,13 @@ type Found = {
   reason: string;
 };
 
-async function discover(company: Company): Promise<Found | null> {
+async function discover(company: Company, options: Options): Promise<Found | null> {
   const distinctiveName = isGuessable(company.name);
-  if (!distinctiveName) return null;
+  // Name guessing needs a distinctive name to build from. Search does not —
+  // that is the entire point of using it.
+  if (!options.search && !distinctiveName) return null;
 
-  for (const candidate of candidateDomains(company.name)) {
+  for (const candidate of await candidatesFor(company, options)) {
     if (!(await resolves(candidate.domain))) continue;
 
     const html = await fetchPage(candidate.domain);
@@ -175,8 +242,82 @@ async function pooled<T, R>(
   return results;
 }
 
+/**
+ * Does search actually propose the right domain?
+ *
+ * Runs against companies whose website the register already gave us, so the
+ * answer is known before the query is sent. That is the only honest way to
+ * size this: the bulk run has nothing to check itself against, and "it found
+ * 200 domains" says nothing about how many of them are right.
+ *
+ * Reports two numbers, and they mean different things:
+ *   - **recall**: the known domain was among the candidates. This is the
+ *     ceiling — the CUI check can only ever confirm what search proposed.
+ *   - **CUI-provable**: the known domain also publishes its fiscal code, so
+ *     the verifier would have accepted it. This is what the bulk run yields.
+ *
+ * The gap between them is companies with a real site that does not display a
+ * CUI. Those are lost, and deliberately: accepting them means accepting
+ * squatters and competitors too.
+ */
+async function measure(options: Options) {
+  const { data, error } = await db
+    .from("companies")
+    .select("id, name, cui, county, domain")
+    .not("domain", "is", null)
+    .not("cui", "is", null)
+    .limit(options.limit ?? 40);
+
+  if (error) {
+    console.error(`Could not read companies: ${error.message}`);
+    process.exit(1);
+  }
+  const known = (data ?? []) as (Company & { domain: string })[];
+  console.log(
+    `Measuring against ${known.length} companies whose domain the register ` +
+      `already carries.\n` +
+      `Each costs at least one Brave query from the 2,000/month free tier.\n`,
+  );
+
+  let proposed = 0;
+  let provable = 0;
+
+  for (const [index, company] of known.entries()) {
+    const candidates = await candidatesFor(company, options);
+    const hit = candidates.some(
+      (candidate) => candidate.domain === company.domain.replace(/^www\./, ""),
+    );
+    if (hit) {
+      proposed += 1;
+      const html = await fetchPage(company.domain);
+      if (html && pageMentionsCui(html, company.cui)) provable += 1;
+    }
+    process.stdout.write(
+      `\r  checked ${index + 1}/${known.length}, ${proposed} proposed, ${provable} provable`,
+    );
+  }
+
+  const pct = (n: number) => ((n / known.length) * 100).toFixed(1);
+  console.log(
+    `\n\nRecall:       ${proposed}/${known.length} (${pct(proposed)}%) — search proposed the right domain\n` +
+      `CUI-provable: ${provable}/${known.length} (${pct(provable)}%) — and the verifier would accept it\n\n` +
+      `The second number is what a bulk run yields. Name guessing, for\n` +
+      `comparison, was 47% recall and 0 accepted on the live run.\n`,
+  );
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+
+  if (options.search && !brave.isConfigured()) {
+    console.error(
+      "BRAVE_SEARCH_API_KEY is not set. Get a free key at\n" +
+        "  https://brave.com/search/api/  (2,000 queries/month, commercial use allowed)\n" +
+        "then add it to .env.local.",
+    );
+    process.exit(1);
+  }
+  if (options.measure) return measure(options);
 
   // Companies with no domain yet. Paged: PostgREST caps a select at 1,000.
   const companies: Company[] = [];
@@ -188,7 +329,7 @@ async function main() {
 
     let query = db
       .from("companies")
-      .select("id, name, cui")
+      .select("id, name, cui, county")
       .is("domain", null)
       .not("cui", "is", null)
       .order("created_at", { ascending: true })
@@ -205,27 +346,49 @@ async function main() {
     if (page.length < wanted) break;
   }
 
-  const guessable = companies.filter((company) => isGuessable(company.name));
+  // Search works from the company as an entity, so a generic name is no
+  // obstacle to it — only name guessing needs a distinctive string.
+  const attempted = options.search
+    ? companies
+    : companies.filter((company) => isGuessable(company.name));
+
   console.log(
     `${companies.length} companies without a domain\n` +
-      `${guessable.length} have a name distinctive enough to guess from ` +
-      `(${companies.length - guessable.length} too generic — skipped)\n`,
+      (options.search
+        ? `searching for all ${attempted.length}, ~1 Brave query each\n`
+        : `${attempted.length} have a name distinctive enough to guess from ` +
+          `(${companies.length - attempted.length} too generic — skipped)\n`),
   );
-  if (guessable.length === 0) return;
+  if (attempted.length === 0) return;
 
+  const run = (company: Company) => discover(company, options);
   const found = (
-    await pooled(guessable, discover, (done) => {
-      if (done % 10 === 0 || done === guessable.length) {
-        process.stdout.write(`\r  checked ${done}/${guessable.length}`);
-      }
-    })
+    options.search
+      ? // Serial: Brave's free tier is one query per second, and the pool that
+        // makes DNS and page fetches fast is what would trip it.
+        await (async () => {
+          const results: (Found | null)[] = [];
+          for (const [index, company] of attempted.entries()) {
+            results.push(await run(company));
+            process.stdout.write(`\r  checked ${index + 1}/${attempted.length}`);
+          }
+          return results;
+        })()
+      : await pooled(attempted, run, (done) => {
+          if (done % 10 === 0 || done === attempted.length) {
+            process.stdout.write(`\r  checked ${done}/${attempted.length}`);
+          }
+        })
   ).filter((result): result is Found => result !== null);
 
   console.log(
     `\n\nProved ${found.length} domains by CUI — ` +
-      `${((found.length / guessable.length) * 100).toFixed(1)}% of those attempted.\n` +
-      "Expect this to be low. See docs/STATUS.md: a Romanian company's legal\n" +
-      "name is frequently not its brand, and most small firms have no site.\n",
+      `${((found.length / attempted.length) * 100).toFixed(1)}% of those attempted.\n` +
+      (options.search
+        ? "Anything the CUI check rejected is not recorded: a wrong domain\n" +
+          "poisons the email guess and every signal derived from it.\n"
+        : "Expect this to be low. See docs/STATUS.md: a Romanian company's legal\n" +
+          "name is frequently not its brand, and most small firms have no site.\n"),
   );
 
   for (const result of found.slice(0, 15)) {
