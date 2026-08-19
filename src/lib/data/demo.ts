@@ -1,4 +1,4 @@
-import { describeEnv } from "@/lib/env";
+import { isDatabaseConfigured } from "@/lib/env";
 import { scoreLead } from "@/lib/signals/scoring";
 import type { Icp } from "@/lib/icp/schema";
 import type { Signal } from "@/lib/signals/types";
@@ -31,7 +31,7 @@ import type {
  */
 
 export function isDemoMode(): boolean {
-  return !describeEnv().valid;
+  return !isDatabaseConfigured();
 }
 
 /* ------------------------------------------------------------ determinism */

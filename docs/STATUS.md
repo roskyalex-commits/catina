@@ -8,6 +8,9 @@ re-explained or re-derived. Update it when the answers change.
 - **Last commit:** `a542fe9` — email + password auth and workspace bootstrap,
   plus agent persistence (step 2 below) on top of it.
 - **Green:** 503 tests, clean `typecheck`, `lint` and `build`.
+- **Step 1 is done.** A real Supabase project exists (Frankfurt), the schema and
+  policies are applied, `verify:rls` passes against it, and signup creates a
+  workspace. The app is no longer running on fixtures.
 
 > If you are reading this in an unzipped export rather than a clone, there is no
 > git history in the folder and `npm install` has to run before anything else.
@@ -92,8 +95,9 @@ Neither substitutes for the other, and the second still gates a real user.
 | `POST`/`GET /api/v1/agents` against a real table | **Never run.** Guards return 401/503 correctly with no session; the insert itself has never executed |
 | Schema DDL + `policies.sql` apply | **Verified** — against real Postgres (PGlite/WASM) in `src/lib/db/policies.test.ts` |
 | Tenant isolation (the actual boundary) | **Verified** — two orgs, cross-org read/insert/update/delete all denied, secrets deny-all, offline, ~1.5s |
-| `db:setup` against Supabase | **Never run.** The SQL is proven; the Supabase project is not |
-| Auth signup → workspace → `/app` | **Never run** against a live Supabase |
+| `db:setup` against Supabase | **Verified** — applied to a live Frankfurt project |
+| `verify:rls` against Supabase | **Verified** — full pass, isolation holds |
+| Auth signup → workspace → `/app` | **Verified** — org + owner membership created, demo marker gone |
 | ANAF response field names | **From documentation.** `npm run verify:anaf` prints the raw payload for exactly this reason — expect a fix |
 | ONRC CSV column mapping | **Never seen the file.** `npm run import:onrc -- --dry-run` prints the detected header; the mapping is one exported const |
 | ONRC parsing, filters, streaming | **Verified** — 65 unit tests, plus an end-to-end `--dry-run` over a synthetic ro-RO export |
@@ -144,9 +148,11 @@ Each of these was made deliberately and has a cost attached to reversing it.
 Each unlocks the next. Do not skip ahead — step 4 produces nothing until step 3
 has rows.
 
-1. **Verify auth** (user action). `db:setup` → `verify:rls` → sign up at
-   `/signup` → land on `/app` with the demo marker **gone** and every count at
-   zero. That transition is the signal that you are reading a real database.
+1. ~~**Verify auth.**~~ **Done.** For the record, what `db:setup` actually needs
+   on Windows: `db:push` prompts for confirmation (`strict: true` in
+   `drizzle.config.ts`) and cannot run without a TTY, so use `npm run db:migrate`
+   — it applies the generated migration deterministically and records it in
+   `__drizzle_migrations`.
 2. **Agent persistence — written, not yet verified.** `POST`/`GET
    /api/v1/agents` exist, on the **request-scoped** client only. The wizard's
    "Create agent" button posts the corrected ICP and routes to the new agent;
@@ -212,6 +218,19 @@ unsubscribe endpoint, Copilot.
   grants table privileges to `authenticated` before RLS narrows them. Without
   the grants every isolation assertion passes for the wrong reason, because the
   role cannot see the tables at all.
+- **An empty env var is not an absent one.** dotenv parses `KEY=` as `""`, and
+  an optional Zod string still fails `.min(1)` when present and empty — so a
+  blanked key reads as malformed rather than missing. `.env.example` ships with
+  eight such lines, so every fresh setup starts there. `present()` in
+  `src/lib/env.ts` strips them before validation; do not bypass it.
+- **Env validation must not couple unrelated subsystems.** `getEnv()` validates
+  the whole schema and throws, so for a while a missing `ANTHROPIC_API_KEY`
+  broke workspace creation, kept the app on demo data with a live database, and
+  made `/api/v1/agents` claim there was no database. Provider keys are optional
+  by design; anything that needs one checks for it and says so by name.
+- **`db:types` needs Docker.** The Supabase CLI shells out to a container for
+  `--db-url`. Without it the placeholder stays, which is survivable — that is
+  what `src/lib/supabase/row.ts` is for.
 - **`src/lib/supabase/types.ts` is a placeholder.** Every selected column
   arrives as `unknown`, which is why `src/lib/supabase/row.ts` exists to narrow
   at runtime rather than cast. Run `npm run db:types` once a project exists and

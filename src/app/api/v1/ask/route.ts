@@ -35,10 +35,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  let apiKey: string;
-  try {
-    apiKey = getEnv().ANTHROPIC_API_KEY;
-  } catch {
+  const apiKey = getEnv().ANTHROPIC_API_KEY;
+  if (!apiKey) {
     return NextResponse.json(
       {
         error:

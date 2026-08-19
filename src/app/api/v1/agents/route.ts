@@ -3,7 +3,7 @@ import { z } from "zod";
 import { agentInsertFrom, agentSummaryFrom } from "@/lib/agents/mapper";
 import { createAgentSchema } from "@/lib/agents/schema";
 import { PLANS } from "@/lib/billing/limits";
-import { describeEnv } from "@/lib/env";
+import { isDatabaseConfigured } from "@/lib/env";
 import { getSessionContext } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -33,11 +33,13 @@ const AGENT_COLUMNS =
  * plainly instead of surfacing a 500 — this is the state a fresh clone is in,
  * so it is the response a first-time reader is most likely to see.
  *
- * `describeEnv()` rather than `isDemoMode()`: same answer, without pulling the
- * demo dataset and the scoring engine into this route's bundle.
+ * `isDatabaseConfigured()` rather than `isDemoMode()`: same answer, without
+ * pulling the demo dataset and the scoring engine into this route's bundle. It
+ * asks only whether Supabase is set up — an unrelated missing key must not make
+ * this route claim there is no database.
  */
 function demoMode(): boolean {
-  return !describeEnv().valid;
+  return !isDatabaseConfigured();
 }
 
 function notConfigured() {

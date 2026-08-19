@@ -75,14 +75,9 @@ export async function POST(request: Request) {
    * configuration problem, not a transient one, so it must not fall into the
    * catch below and be reported as "try again in a moment" — advice that will
    * never come true and sends the reader looking in the wrong place.
-   *
-   * Note `getEnv()` validates the whole schema, so this also trips when the
-   * Supabase vars are absent, which is the state of a fresh clone.
    */
-  let apiKey: string;
-  try {
-    apiKey = getEnv().ANTHROPIC_API_KEY;
-  } catch {
+  const apiKey = getEnv().ANTHROPIC_API_KEY;
+  if (!apiKey) {
     return NextResponse.json(
       {
         error:
