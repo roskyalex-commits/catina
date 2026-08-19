@@ -19,6 +19,7 @@
     "import:onrc": "tsx scripts/import-onrc.ts",
     "enrich:registry": "tsx scripts/enrich-registry.ts",
     "import:reps": "tsx scripts/import-representatives.ts",
+    "source": "tsx scripts/run-sourcing.ts",
     "verify:anaf": "tsx scripts/verify-anaf.ts",
     "verify:rls": "tsx scripts/verify-rls.ts",
     "verify:agents": "tsx scripts/verify-agents.ts",

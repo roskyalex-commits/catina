@@ -8,8 +8,9 @@ re-explained or re-derived. Update it when the answers change.
 - **Last commit:** `a542fe9` — email + password auth and workspace bootstrap,
   plus agent persistence (step 2 below) on top of it.
 - **Green:** 581 tests, clean `typecheck`, `lint` and `build`.
-- **Steps 1–4 are done.** Sourcing produces scored leads from the real
-  registry — `npm run verify:sourcing` proves the chain end to end.
+- **Steps 1–4 are done and visible.** Sourcing produces scored leads from the
+  real registry, and `/app` renders them — 117 leads for one agent over the
+  Cluj slice.
 - **Steps 1–3 are done, enriched, and have contacts.** The database holds
   **11,597 Cluj companies** and **11,217 named decision-makers** — 82% of
   companies have someone to write to.
@@ -107,6 +108,7 @@ Neither substitutes for the other, and the second still gates a real user.
 | ANAF enrichment end to end | **Verified** — 11,438 companies enriched: VAT, e-Factura, inactive flag, real CAEN |
 | Decision-makers from ONRC | **Verified** — 11,217 people, 82% company coverage, no vendor and no cost |
 | Sourcing run → scored leads | **Verified** — `npm run verify:sourcing`, 19 checks against the live registry |
+| `/app` reads real data | **Verified** — dashboard, contacts, agent detail and insights all query the database |
 | ONRC CSV column mapping | **Verified against the real 08.07.2026 export.** Delimiter is `^`; every column mapped |
 | ONRC parsing, filters, streaming | **Verified** — 94 unit tests, plus full runs over the real 690MB file |
 | ONRC import end to end | **Verified** — 4.0M rows read, 11,597 companies written to Supabase |
@@ -143,8 +145,10 @@ Each of these was made deliberately and has a cost attached to reversing it.
 - **No Apollo.** Its free and Basic plans include no API access at all; the API
   starts around $745/mo. This was checked, not assumed.
 - **Pages never touch the database.** They read `src/lib/data/*`, which returns
-  typed view models — fixtures today, queries as persistence lands. Keeping
-  that seam is why the UI will not be rebuilt underneath.
+  typed view models. That seam paid off exactly as intended: the accessors moved
+  from fixtures to live queries and **not one page component changed**. The
+  row-to-view-model mapping now lives in `src/lib/data/rows.ts`, pure and
+  shared, for the same reason.
 - **Romania warns, it does not block.** Law 506/2004 requires express prior
   consent for commercial email with no B2B exemption, and ANSPDCP fines run
   RON 5,000–100,000 or up to 2% of turnover. The app warns and records an
@@ -228,10 +232,6 @@ has rows.
    One lead per company rather than one per person — a company with four
    administrators is one opportunity, and mailing all four is how a sending
    domain acquires a reputation problem.
-
-   **What it does not yet do:** the leads exist in the database but no screen
-   reads them. `src/lib/data/*` still returns fixtures or empty, so `/app` shows
-   zeros. That is the next piece of work, and it is small.
 
    *Original note:* `src/lib/pipeline/source-run.ts` plus
    `POST /api/v1/sourcing/run`, bounded to ~25 companies per invocation and
