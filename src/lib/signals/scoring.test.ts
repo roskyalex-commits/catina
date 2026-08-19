@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   rescoreWithEmail,
+  rescoreWithSignals,
   scoreLead,
   summariseScore,
   type ScoreBreakdown,
@@ -421,5 +422,113 @@ describe("rescoreWithEmail", () => {
 
   it("leaves the score where it was when nothing was found", () => {
     expect(rescoreWithEmail(at45, undefined).total).toBe(45);
+  });
+});
+
+describe("rescoreWithSignals", () => {
+  /** A contactable lead as enrichment leaves it: good fit, an email, no signals. */
+  const at54: ScoreBreakdown = {
+    total: 54,
+    icpFit: { score: 1, weight: 0.45, reasons: [{ label: "Target title", points: 1 }] },
+    signals: { score: 0, weight: 0.35, reasons: [{ label: "No buying signals detected yet", points: 0 }] },
+    contactability: { score: 0.4305, weight: 0.2, reasons: [{ label: "Email found at source", points: 0.75 }] },
+    penalties: { total: 0, reasons: [] },
+  };
+
+  function hiring(overrides: Partial<Signal> = {}): Signal {
+    return {
+      type: "hiring_buyer_role",
+      title: "Hiring a Marketing Director",
+      strength: 0.9,
+      detectedAt: new Date(),
+      dedupeKey: "h1",
+      ...overrides,
+    };
+  }
+
+  it("lifts a lead off the no-signal score", () => {
+    const after = rescoreWithSignals(at54, [hiring()]);
+
+    // 35% of the score was a constant zero until the scanner existed.
+    expect(after.total).toBeGreaterThan(54);
+    expect(after.signals.score).toBeGreaterThan(0);
+  });
+
+  it("leaves fit and contactability exactly as they were", () => {
+    const after = rescoreWithSignals(at54, [hiring()]);
+
+    expect(after.icpFit).toEqual(at54.icpFit);
+    expect(after.contactability).toEqual(at54.contactability);
+  });
+
+  it("agrees with scoreLead rather than reimplementing it", () => {
+    const signals = [hiring()];
+    const full = scoreLead(base({ signals }));
+
+    expect(rescoreWithSignals(at54, signals).signals.score).toBeCloseTo(
+      full.signals.score,
+      10,
+    );
+  });
+
+  it("keeps the VAT penalty, which no signal put there", () => {
+    const withVat: ScoreBreakdown = {
+      ...at54,
+      penalties: { total: -0.05, reasons: [{ label: "Not registered for VAT", points: -0.05 }] },
+    };
+
+    const after = rescoreWithSignals(withVat, [hiring()]);
+    expect(after.penalties.reasons).toContainEqual({
+      label: "Not registered for VAT",
+      points: -0.05,
+    });
+  });
+
+  it("disqualifies on a fresh insolvency signal", () => {
+    const after = rescoreWithSignals(at54, [
+      hiring({ type: "insolvency_risk", title: "Listed as an inactive taxpayer at ANAF", strength: 1 }),
+    ]);
+
+    expect(after.disqualified).toBe("Insolvency proceedings on record");
+    expect(after.total).toBe(0);
+  });
+
+  it("withdraws its own stale distress verdict when the signal is gone", () => {
+    const dead: ScoreBreakdown = {
+      ...at54,
+      total: 0,
+      disqualified: "Insolvency proceedings on record",
+    };
+
+    // A company can come off the inactive list. Inheriting the verdict would
+    // keep the lead dead forever on the strength of a scan months ago.
+    const after = rescoreWithSignals(dead, [hiring()]);
+    expect(after.disqualified).toBeUndefined();
+    expect(after.total).toBeGreaterThan(54);
+  });
+
+  it("does not withdraw a verdict a scan knows nothing about", () => {
+    const suppressed: ScoreBreakdown = {
+      ...at54,
+      total: 0,
+      disqualified: "On your do-not-contact list",
+    };
+
+    expect(rescoreWithSignals(suppressed, [hiring()]).disqualified).toBe(
+      "On your do-not-contact list",
+    );
+  });
+
+  it("is a no-op on a breakdown that had no signals and still has none", () => {
+    expect(rescoreWithSignals(at54, []).total).toBe(54);
+  });
+
+  it("decays an old signal towards nothing", () => {
+    const fresh = rescoreWithSignals(at54, [hiring()]);
+    const old = rescoreWithSignals(at54, [
+      hiring({ detectedAt: new Date(Date.now() - 365 * 86_400_000) }),
+    ]);
+
+    expect(old.total).toBeLessThan(fresh.total);
   });
 });

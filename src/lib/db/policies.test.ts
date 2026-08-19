@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 
 /**
@@ -21,7 +21,21 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
  * SQL itself is correct, which is the half that used to be unprovable.
  */
 
-const SCHEMA_SQL = "drizzle/0000_sleepy_stark_industries.sql";
+const MIGRATIONS_DIR = "drizzle";
+
+/**
+ * Every migration, in order — not just the first one.
+ *
+ * This used to name `0000_sleepy_stark_industries.sql` directly, which quietly
+ * meant the test asserted policies against a schema several migrations behind.
+ * It broke the moment `policies.sql` referenced a table a later migration
+ * created, which is exactly when a schema test should notice.
+ */
+function migrationFiles(): string[] {
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((name) => /^\d{4}_.*\.sql$/.test(name))
+    .sort();
+}
 const POLICIES_SQL = "drizzle/policies.sql";
 
 const USER_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -104,11 +118,13 @@ beforeAll(async () => {
   await db.exec(SUPABASE_SHIM);
 
   // drizzle separates statements with this marker.
-  for (const statement of readFileSync(SCHEMA_SQL, "utf8")
-    .split("--> statement-breakpoint")
-    .map((s) => s.trim())
-    .filter(Boolean)) {
-    await db.exec(statement);
+  for (const file of migrationFiles()) {
+    for (const statement of readFileSync(`${MIGRATIONS_DIR}/${file}`, "utf8")
+      .split("--> statement-breakpoint")
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      await db.exec(statement);
+    }
   }
 
   // Applied in one call, exactly as scripts/apply-policies.ts does, so a syntax
@@ -124,10 +140,21 @@ afterAll(async () => {
 
 describe("schema and policies apply", () => {
   it("creates every table", async () => {
-    const { rows } = await db.query<{ n: number }>(
-      "select count(*)::int as n from pg_tables where schemaname='public'",
+    // Named rather than counted: a bare number has to be edited on every
+    // migration and says nothing about which table went missing when it fails.
+    const { rows } = await db.query<{ tablename: string }>(
+      "select tablename from pg_tables where schemaname='public'",
     );
-    expect(rows[0].n).toBe(17);
+    const tables = new Set(rows.map((row) => row.tablename));
+
+    for (const table of [
+      "orgs", "memberships", "agents", "companies", "people", "emails",
+      "signals", "company_scans", "leads", "lists", "list_members",
+      "campaigns", "sequence_steps", "messages", "job_runs", "suppressions",
+      "email_accounts", "provider_usage",
+    ]) {
+      expect(tables, `${table} is missing`).toContain(table);
+    }
   });
 
   it("enables RLS on every table carrying org_id", async () => {
@@ -226,9 +253,37 @@ describe("secrets and shared data", () => {
   });
 
   it("keeps registry data readable by any authenticated user", async () => {
-    // companies/people/emails/signals are public reference data, cached once.
+    // companies/people/emails/signals/company_scans are public reference data.
     const { rows } = await asUser(USER_B, "select * from companies");
     expect(rows).toHaveLength(1);
+  });
+
+  it("lets any authenticated user read signals and scan state", async () => {
+    // The sourcing route scores on the caller's session, so it must be able to
+    // read signals for companies it did not create.
+    await expect(asUser(USER_B, "select * from signals")).resolves.toBeDefined();
+    await expect(asUser(USER_B, "select * from company_scans")).resolves.toBeDefined();
+  });
+
+  it("lets nobody but the service role write signals or scan state", async () => {
+    // These are facts about a public company, not about a tenant. A user who
+    // could write them would be writing into every other workspace's scoring.
+    const company = "11111111-1111-4111-8111-111111111111";
+
+    await expect(
+      asUser(
+        USER_A,
+        `insert into signals (company_id, type, title, dedupe_key)
+         values ('${company}'::uuid, 'hiring_surge', 'x', 'k1')`,
+      ),
+    ).rejects.toThrow();
+
+    await expect(
+      asUser(
+        USER_A,
+        `insert into company_scans (company_id) values ('${company}'::uuid)`,
+      ),
+    ).rejects.toThrow();
   });
 });
 

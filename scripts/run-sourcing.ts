@@ -21,6 +21,7 @@ import {
   type RegistryPerson,
   type SourceRunDeps,
 } from "@/lib/pipeline/source-run";
+import { findSignalsFor } from "@/lib/signals/repository";
 import { requireEnv } from "./load-env";
 
 const PAGE_SIZE = 25;
@@ -212,6 +213,10 @@ async function main() {
           seniority: (person.seniority as string) ?? undefined,
         };
       });
+    },
+
+    async findSignals(companyIds) {
+      return findSignalsFor(db, companyIds);
     },
 
     async existingPersonIds(personIds) {

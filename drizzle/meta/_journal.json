@@ -15,6 +15,13 @@
       "when": 1787118516412,
       "tag": "0001_omniscient_edwin_jarvis",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787182001705,
+      "tag": "0002_narrow_deadpool",
+      "breakpoints": true
     }
   ]
 }

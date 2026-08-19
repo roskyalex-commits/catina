@@ -156,6 +156,86 @@ function emailDisqualifier(email: ScoreInput["email"]): string | undefined {
   return undefined;
 }
 
+/**
+ * Re-score a lead after a scan produced new signals.
+ *
+ * Same shape as `rescoreWithEmail`, and for the same reason: a scan learns
+ * nothing about ICP fit or contactability, so re-deriving them would mean
+ * re-reading the agent, the company and its emails purely to recompute values
+ * that have not moved — and any drift between the two reads would surface as a
+ * score that changed for reasons nobody asked about.
+ *
+ * Signals touch **two** components rather than one. Negative signals are
+ * deliberately routed to penalties rather than subtracted from the signal score
+ * (see `scoreSignals`), so both halves are recomputed here. The VAT penalty
+ * comes from the company row, not from a signal, so it is carried across by
+ * label — the same compare-by-value trick `EMAIL_DISQUALIFIERS` uses.
+ */
+export function rescoreWithSignals(
+  breakdown: ScoreBreakdown,
+  signals: Signal[],
+  now = new Date(),
+): ScoreBreakdown {
+  const scored = scoreSignals(signals, now);
+  const fromSignals = signalPenalties(signals, now);
+
+  // Everything in the stored penalties that a signal did not put there.
+  const carriedPenalties = breakdown.penalties.reasons.filter(
+    (reason) => reason.label === VAT_PENALTY_LABEL,
+  );
+  const carriedTotal = carriedPenalties.reduce((sum, r) => sum + r.points, 0);
+
+  const penalties = {
+    total: Math.max(-0.5, fromSignals.total + carriedTotal),
+    reasons: [...fromSignals.reasons, ...carriedPenalties],
+  };
+
+  const weighted =
+    breakdown.icpFit.score * WEIGHTS.icpFit +
+    scored.score * WEIGHTS.signals +
+    breakdown.contactability.score * WEIGHTS.contactability;
+
+  const total = Math.round(
+    Math.max(0, Math.min(1, weighted + penalties.total)) * 100,
+  );
+
+  /*
+   * Distress is re-decided from the signals present, not inherited.
+   *
+   * A company can come off the inactive list, and a verdict recorded on a
+   * previous scan would otherwise keep the lead dead forever. Non-signal
+   * disqualifiers — suppression, exclusions, a bad email — are untouched by a
+   * scan and survive.
+   */
+  const insolvent = signals.some((signal) => signal.type === "insolvency_risk");
+  const carriedVerdict = SIGNAL_DISQUALIFIERS.has(breakdown.disqualified ?? "")
+    ? undefined
+    : breakdown.disqualified;
+  const disqualified = insolvent
+    ? "Insolvency proceedings on record"
+    : carriedVerdict;
+
+  return {
+    ...breakdown,
+    total: disqualified ? 0 : total,
+    signals: { ...scored, weight: WEIGHTS.signals },
+    penalties,
+    disqualified,
+  };
+}
+
+/**
+ * Verdicts a scan is entitled to withdraw.
+ *
+ * Only the ones a signal can produce. Compared by value for the same reason as
+ * `EMAIL_DISQUALIFIERS`: a rescore has to tell a verdict it wrote itself from
+ * one that came from somewhere it knows nothing about.
+ */
+const SIGNAL_DISQUALIFIERS: ReadonlySet<string> = new Set([
+  "Insolvency proceedings on record",
+  "Listed as an inactive taxpayer at ANAF",
+]);
+
 /** Hard rules. These override the score rather than nudging it. */
 function findDisqualifier(input: ScoreInput): string | undefined {
   if (input.suppressed) return "On your do-not-contact list";
@@ -350,26 +430,55 @@ function scoreContactability(
   return { score: clamp(score), reasons };
 }
 
-function scorePenalties(input: ScoreInput): { total: number; reasons: ScoreReason[] } {
+/**
+ * Penalties that come from signals.
+ *
+ * Split from the company-derived ones so `rescoreWithSignals` can recompute
+ * exactly this half and carry the other verbatim. Two implementations of the
+ * same arithmetic would drift, and the drift would show up as a lead whose
+ * score changed for no reason anyone could name.
+ */
+export function signalPenalties(
+  signals: Signal[],
+  now: Date,
+): { total: number; reasons: ScoreReason[] } {
   const reasons: ScoreReason[] = [];
   let total = 0;
 
-  for (const signal of input.signals ?? []) {
+  for (const signal of signals) {
     if (!NEGATIVE_SIGNALS.has(signal.type)) continue;
-    const decay = recencyMultiplier(signal.type, signal.detectedAt, input.now ?? new Date());
+    const decay = recencyMultiplier(signal.type, signal.detectedAt, now);
     const penalty = -0.25 * signal.strength * decay;
     total += penalty;
     reasons.push({ label: signal.title, points: penalty });
   }
 
-  if (input.company.vatRegistered === false) {
+  return { total, reasons };
+}
+
+/** The label the VAT penalty is recorded under, so a rescore can recognise it. */
+const VAT_PENALTY_LABEL = "Not registered for VAT";
+
+/** Penalties that come from the company row, and so survive a signal rescore. */
+function companyPenalties(
+  company: ScoreInput["company"],
+): { total: number; reasons: ScoreReason[] } {
+  if (company.vatRegistered === false) {
     // Not VAT-registered in Romania usually means very small or dormant —
     // a weak negative, not a disqualifier, since young companies qualify too.
-    total -= 0.05;
-    reasons.push({ label: "Not registered for VAT", points: -0.05 });
+    return { total: -0.05, reasons: [{ label: VAT_PENALTY_LABEL, points: -0.05 }] };
   }
+  return { total: 0, reasons: [] };
+}
 
-  return { total: Math.max(-0.5, total), reasons };
+function scorePenalties(input: ScoreInput): { total: number; reasons: ScoreReason[] } {
+  const fromSignals = signalPenalties(input.signals ?? [], input.now ?? new Date());
+  const fromCompany = companyPenalties(input.company);
+
+  return {
+    total: Math.max(-0.5, fromSignals.total + fromCompany.total),
+    reasons: [...fromSignals.reasons, ...fromCompany.reasons],
+  };
 }
 
 function clamp(value: number): number {

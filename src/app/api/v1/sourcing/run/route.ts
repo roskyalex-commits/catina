@@ -9,6 +9,7 @@ import {
   type RegistryPerson,
   type SourceRunDeps,
 } from "@/lib/pipeline/source-run";
+import { findSignalsFor } from "@/lib/signals/repository";
 import { getSessionContext } from "@/lib/supabase/server";
 import {
   optionalNumber,
@@ -242,6 +243,14 @@ export async function POST(request: Request) {
             seniority: optionalString(person.seniority) ?? undefined,
           };
         });
+      },
+
+      async findSignals(companyIds) {
+        // `signals` is shared reference data — `authenticated` may select it —
+        // so this runs on the caller's session like everything else here.
+        // Until this dep was supplied, scoreSignals returned a constant zero
+        // for 35% of every lead's score.
+        return findSignalsFor(supabase, companyIds);
       },
 
       async existingPersonIds(personIds) {

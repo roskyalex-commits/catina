@@ -129,7 +129,7 @@ create policy sequence_steps_member_all on public.sequence_steps
 do $$
 declare
   t text;
-  shared_tables text[] := array['companies', 'people', 'emails', 'signals'];
+  shared_tables text[] := array['companies', 'people', 'emails', 'signals', 'company_scans'];
 begin
   foreach t in array shared_tables loop
     execute format('alter table public.%I enable row level security', t);

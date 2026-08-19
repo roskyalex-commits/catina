@@ -1,5 +1,9 @@
 import type { AnafClient } from "@/lib/sources/anaf/client";
 import {
+  AnafGrowthFromRowSource,
+  AnafStatusFromRowSource,
+} from "./sources/anaf-row";
+import {
   AnafGrowthSignalSource,
   AnafStatusSignalSource,
   NewRegistrationSignalSource,
@@ -123,6 +127,55 @@ export function allSignalSources(anaf: AnafClient): SignalSource[] {
     new TechStackSignalSource(),
     new PricingPageSignalSource(),
   ];
+}
+
+export type SourceSelection = {
+  /**
+   * Catalogue keys the agent enabled. Empty or absent means every source.
+   *
+   * Filtering here rather than inside the scanner keeps `SignalScanner`
+   * ignorant of the catalogue: it runs what it is given, and the caller owns
+   * the policy about which sources an agent pays for.
+   */
+  enabled?: string[];
+  /**
+   * A live ANAF client. Omit it — the usual case — and the registry signals are
+   * computed from the enriched `companies` row instead, with no HTTP at all.
+   *
+   * `AnafClient` serialises every request at ~1.1s, and the growth source alone
+   * makes two. Passing a client turns a scan that is bound by nothing into one
+   * bound by a rate limit, so it belongs behind an explicit flag rather than
+   * being the default.
+   */
+  anaf?: AnafClient;
+};
+
+/**
+ * The sources a scan should run.
+ *
+ * `allSignalSources` keeps its signature and its live-ANAF behaviour because it
+ * is what the tests drive. This is the one the pipeline calls.
+ */
+export function selectSignalSources(selection: SourceSelection = {}): SignalSource[] {
+  const registry = selection.anaf
+    ? [
+        new AnafGrowthSignalSource(selection.anaf),
+        new AnafStatusSignalSource(selection.anaf),
+      ]
+    : [new AnafGrowthFromRowSource(), new AnafStatusFromRowSource()];
+
+  const all: SignalSource[] = [
+    ...registry,
+    new NewRegistrationSignalSource(),
+    new HiringSignalSource(),
+    new NewsSignalSource("ro"),
+    new TechStackSignalSource(),
+    new PricingPageSignalSource(),
+  ];
+
+  const enabled = selection.enabled;
+  if (!enabled || enabled.length === 0) return all;
+  return all.filter((source) => enabled.includes(source.key));
 }
 
 /** Descriptions for the signal picker, without needing a client to build them. */

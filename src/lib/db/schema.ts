@@ -295,6 +295,72 @@ export const emails = pgTable(
   ],
 );
 
+/* ------------------------------------------------------------ scan state */
+
+/**
+ * What the last scan saw at a company, so the next one can diff.
+ *
+ * Four signal sources work by comparison rather than observation — tech-stack
+ * added/removed, pricing-page changed, hiring surge, and first-time VAT
+ * registration. None of them can ever fire without a record of the previous
+ * scan, and `signals` cannot supply it: signals record what *changed*, and a
+ * diff needs what did **not**. "The stack is still WordPress and Stripe"
+ * produces no signal and is exactly the state the next comparison requires.
+ *
+ * A table rather than a jsonb column on `companies`, for two reasons. The
+ * scheduler asks "which companies are due a scan" on every run and wants an
+ * index for it, not a jsonb path expression over a table heading for millions
+ * of rows. And `companies` is the hot read path, concurrently written by both
+ * importers; scan bookkeeping has no business contending with them.
+ *
+ * Shared reference data like `companies` — public facts about a public website,
+ * no `orgId`, service-role writes only.
+ */
+export const companyScans = pgTable(
+  "company_scans",
+  {
+    companyId: uuid("company_id")
+      .primaryKey()
+      .references(() => companies.id, { onDelete: "cascade" }),
+
+    /** Detected by `fingerprintTech`; the diff input for tech_stack_added/removed. */
+    techStack: text("tech_stack").array().notNull().default([]),
+    /** Which page the hash belongs to, so the next scan compares the same one. */
+    pricingPageUrl: text("pricing_page_url"),
+    pricingPageHash: text("pricing_page_hash"),
+    careersPageUrl: text("careers_page_url"),
+    careersJobTitles: text("careers_job_titles").array().notNull().default([]),
+
+    /**
+     * Carried from the `companies` row at scan time.
+     *
+     * Copied rather than read live because the diff must compare against what
+     * the previous *scan* saw. Reading `companies` at scan time compares a value
+     * with itself and never fires.
+     */
+    revenueRon: numeric("revenue_ron"),
+    vatRegistered: boolean("vat_registered"),
+
+    /** Which ICP keywords were found, and on which page. */
+    keywordHits: jsonb("keyword_hits"),
+    /** Per-source ok/skipped/error, so a quietly failing source is visible. */
+    sourceResults: jsonb("source_results"),
+
+    scanStatus: text("scan_status", { enum: ["ok", "unreachable", "error"] })
+      .notNull()
+      .default("ok"),
+    /** Backoff input: a site down four scans running is not worth a fifth. */
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    scannedAt: timestamp("scanned_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("company_scans_scanned_idx").on(t.scannedAt)],
+);
+
 /* ----------------------------------------------------------------- signals */
 
 /**
