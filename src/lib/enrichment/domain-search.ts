@@ -43,10 +43,14 @@ export const AGGREGATOR_DOMAINS = new Set([
   "datefirme.ro", "bilanturi.ro", "portal.onrc.ro", "onrc.ro", "anaf.ro",
   "static.anaf.ro", "recom.onrc.ro", "doingbusiness.ro", "clasamentefirme.ro",
   "verificatfirme.ro", "codfiscal.net", "romanianfirms.com",
+  // Observed in live results, and each is a sibling of one already listed:
+  // aggregators run the same database under several TLDs.
+  "listafirme.eu", "lege5.ro", "companywall.ro", "rolist.ro", "bizoo.ro",
   // Directories, marketplaces and social — a profile is not a website
   "linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com",
   "youtube.com", "tiktok.com", "pinterest.com", "wikipedia.org",
   "google.com", "maps.google.com", "yelp.com", "foursquare.com",
+  "mapquest.com", "waze.com", "tripadvisor.com", "bing.com",
   "paginiaurii.ro", "pagini-aurii.ro", "cylex.ro", "tuugo.ro", "hotfrog.ro",
   "europages.ro", "europages.co.uk", "kompass.com", "yellowpages.ro",
   "olx.ro", "publi24.ro", "emag.ro", "ejobs.ro", "bestjobs.eu",
@@ -107,7 +111,77 @@ export type DomainCandidate = {
   rank: number;
   /** The result that produced it, so a wrong candidate is explainable. */
   title: string;
+  /**
+   * How it was found. `result` is the host of a result we would visit;
+   * `cited` is a domain named *inside* an aggregator's title or snippet.
+   */
+  via: "result" | "cited";
 };
+
+/**
+ * TLDs a bare, scheme-less host is allowed to have.
+ *
+ * Snippet text is prose, and prose is full of things shaped like hostnames.
+ * Requiring a plausible TLD keeps "CIF17459688" and "J12/1330/2005" out
+ * without needing to understand Romanian.
+ */
+const CITED_TLDS = [
+  "ro", "com", "eu", "net", "org", "io", "dev", "tech", "agency", "online",
+  "app", "co", "biz", "info", "digital", "solutions", "group", "media",
+];
+
+/**
+ * Domains named inside a result's own text.
+ *
+ * This is the step that makes search work for Romanian companies, and it was
+ * measured rather than designed. Searching BASICSOFT SRL returns listafirme.ro
+ * first, and its result title is literally
+ * `Website BASICSOFT SRL din Cluj Napoca https://codespring.ro` — the
+ * aggregator we must exclude as a *destination* is the thing publishing the
+ * answer. Without this, the same search yields `basicsoft.us` (an unrelated
+ * American company) and nothing else.
+ */
+export function citedDomains(text: string): string[] {
+  if (!text) return [];
+  const found = new Set<string>();
+
+  /*
+   * Markup is stripped two ways, and both are needed.
+   *
+   * Brave highlights the query terms, so a snippet arrives as
+   * `<strong>codespring</strong>.ro` — replacing a tag with a space splits
+   * that host in half. Replacing it with nothing fixes that case and breaks
+   * the other one, fusing `…text</p><p>domain.ro…` into a hostname nobody
+   * wrote. Scanning both readings costs one regex and every candidate faces
+   * the CUI check regardless, so a spurious extra candidate costs a fetch,
+   * not a wrong answer.
+   */
+  const readings = [text.replace(/<[^>]*>/g, ""), text.replace(/<[^>]*>/g, " ")];
+  for (const cleaned of readings) collect(cleaned, found);
+
+  return [...found];
+}
+
+function collect(cleaned: string, found: Set<string>): void {
+
+  const withScheme = cleaned.match(/https?:\/\/[^\s"'<>)\]]+/gi) ?? [];
+  for (const raw of withScheme) {
+    try {
+      found.add(new URL(raw).hostname.toLowerCase().replace(/^www\./, ""));
+    } catch {
+      /* prose that only looks like a URL */
+    }
+  }
+
+  const bare = cleaned.match(/\b(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/gi) ?? [];
+  for (const raw of bare) {
+    const host = raw.toLowerCase().replace(/^www\./, "");
+    const tld = host.split(".").pop() ?? "";
+    // A bare host needs a plausible TLD; a schemed one has already proved
+    // itself by parsing as a URL.
+    if (CITED_TLDS.includes(tld)) found.add(host);
+  }
+}
 
 /**
  * Candidate domains from a page of results, best first and deduplicated.
@@ -123,25 +197,50 @@ export function candidatesFromResults(
   const seen = new Set<string>();
   const candidates: DomainCandidate[] = [];
 
+  const offer = (
+    domain: string,
+    rank: number,
+    title: string,
+    via: DomainCandidate["via"],
+  ) => {
+    if (isAggregator(domain)) return;
+    // A bare TLD, an IP or a fragment of prose is not a company website.
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(domain)) return;
+    if (seen.has(domain)) return;
+    seen.add(domain);
+    candidates.push({ domain, rank, title, via });
+  };
+
+  /*
+   * Cited domains first, and deliberately.
+   *
+   * A domain a registry aggregator names as the company's website is a direct
+   * statement about *this* company. A domain that merely ranks for the name is
+   * a guess with better provenance than our own — and for BASICSOFT SRL those
+   * two produce codespring.ro and basicsoft.us respectively, only one of which
+   * is in Romania. Both still face the CUI check; this only decides which is
+   * fetched first, and the free tier makes fetch order matter.
+   */
   for (const [rank, result] of results.entries()) {
-    let host: string;
-    try {
-      host = new URL(result.url).hostname.toLowerCase().replace(/^www\./, "");
-    } catch {
-      continue;
+    for (const domain of citedDomains(`${result.title} ${result.description}`)) {
+      offer(domain, rank, result.title, "cited");
     }
-
-    if (isAggregator(host)) continue;
-    // A bare TLD or an IP is not a company website.
-    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) continue;
-    if (seen.has(host)) continue;
-
-    seen.add(host);
-    candidates.push({ domain: host, rank, title: result.title });
-    if (candidates.length >= limit) break;
   }
 
-  return candidates;
+  for (const [rank, result] of results.entries()) {
+    try {
+      offer(
+        new URL(result.url).hostname.toLowerCase().replace(/^www\./, ""),
+        rank,
+        result.title,
+        "result",
+      );
+    } catch {
+      /* a result whose URL does not parse */
+    }
+  }
+
+  return candidates.slice(0, limit);
 }
 
 const braveSchema = z
@@ -199,9 +298,13 @@ export class BraveSearch implements WebSearch {
     const url = new URL(BraveSearch.BASE);
     url.searchParams.set("q", query);
     url.searchParams.set("count", "10");
-    // Romanian companies, Romanian results. `country` biases the index;
-    // `search_lang` keeps the snippets readable for the CUI check.
-    url.searchParams.set("country", "RO");
+    /*
+     * No `country`. Brave's country enum has 37 entries and **Romania is not
+     * one of them** — passing `RO` is a 422, not a soft fallback, so it fails
+     * the whole request. Observed, not read: the error body enumerates the
+     * accepted values and RO is absent. `search_lang` is a separate parameter
+     * and does accept `ro`.
+     */
     url.searchParams.set("search_lang", "ro");
 
     const response = await fetch(url, {

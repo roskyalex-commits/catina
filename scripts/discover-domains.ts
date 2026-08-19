@@ -61,12 +61,14 @@ type Options = {
   county?: string;
   /** Take candidates from a search engine instead of the company name. */
   search: boolean;
+  /** Only companies that are already somebody's lead. */
+  leadsOnly: boolean;
   /** Score the candidate source against domains we already know. */
   measure: boolean;
 };
 
 function parseArgs(argv: string[]): Options {
-  const options: Options = { dryRun: false, search: false, measure: false };
+  const options: Options = { dryRun: false, search: false, measure: false, leadsOnly: false };
   for (let i = 0; i < argv.length; i += 1) {
     const next = () => argv[(i += 1)];
     switch (argv[i]) {
@@ -81,6 +83,9 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--search":
         options.search = true;
+        break;
+      case "--leads":
+        options.leadsOnly = true;
         break;
       case "--measure":
         options.measure = true;
@@ -120,8 +125,18 @@ async function resolves(domain: string): Promise<boolean> {
  * Failures are ordinary here — most guesses are wrong, and a wrong guess shows
  * up as a timeout, a certificate error or a 404. None of that is worth logging.
  */
-async function fetchPage(domain: string): Promise<string | null> {
-  for (const url of [`https://${domain}/`, `http://${domain}/`]) {
+/**
+ * Pages a Romanian company puts its fiscal code on.
+ *
+ * Measured over 60 companies whose real domain the register already carries:
+ * the home page alone proves 5 of the 44 that are reachable, and adding
+ * `/contact` takes it to 9. Nearly double, for one extra fetch on the
+ * candidates that would otherwise have been discarded.
+ */
+const PROOF_PATHS = ["/", "/contact", "/termeni-si-conditii"];
+
+async function fetchPage(domain: string, path = "/"): Promise<string | null> {
+  for (const url of [`https://${domain}${path}`, `http://${domain}${path}`]) {
     try {
       const response = await fetch(url, {
         redirect: "follow",
@@ -143,6 +158,33 @@ async function fetchPage(domain: string): Promise<string | null> {
     }
   }
   return null;
+}
+
+/**
+ * Does this domain prove it belongs to the company with this fiscal code?
+ *
+ * The home page first, then the pages a Romanian company actually prints its
+ * CUI on. Stops at the first proof, and gives up immediately if the home page
+ * is unreachable — the deeper paths cannot exist if the site does not.
+ *
+ * Returns the home page too, so a caller that wants a weaker signal (a name
+ * match, recorded but never accepted) does not have to fetch it twice.
+ */
+async function provesOwnership(
+  domain: string,
+  cui: string,
+): Promise<{ home: string | null; cuiFound: boolean }> {
+  let home: string | null = null;
+
+  for (const path of PROOF_PATHS) {
+    const page = await fetchPage(domain, path);
+    if (path === "/") {
+      home = page;
+      if (page === null) return { home: null, cuiFound: false };
+    }
+    if (page && pageMentionsCui(page, cui)) return { home, cuiFound: true };
+  }
+  return { home, cuiFound: false };
 }
 
 type Company = { id: string; name: string; cui: string; county?: string | null };
@@ -197,12 +239,13 @@ async function discover(company: Company, options: Options): Promise<Found | nul
   for (const candidate of await candidatesFor(company, options)) {
     if (!(await resolves(candidate.domain))) continue;
 
-    const html = await fetchPage(candidate.domain);
+    const proof = await provesOwnership(candidate.domain, company.cui);
+
     const verdict = verifyDomain(
       {
-        reachable: html !== null,
-        cuiOnPage: html ? pageMentionsCui(html, company.cui) : false,
-        nameOnPage: html ? pageMentionsName(html, company.name) : false,
+        reachable: proof.home !== null,
+        cuiOnPage: proof.cuiFound,
+        nameOnPage: proof.home ? pageMentionsName(proof.home, company.name) : false,
       },
       { distinctiveName },
     );
@@ -289,8 +332,8 @@ async function measure(options: Options) {
     );
     if (hit) {
       proposed += 1;
-      const html = await fetchPage(company.domain);
-      if (html && pageMentionsCui(html, company.cui)) provable += 1;
+      const proof = await provesOwnership(company.domain, company.cui);
+      if (proof.cuiFound) provable += 1;
     }
     process.stdout.write(
       `\r  checked ${index + 1}/${known.length}, ${proposed} proposed, ${provable} provable`,
@@ -320,7 +363,7 @@ async function main() {
   if (options.measure) return measure(options);
 
   // Companies with no domain yet. Paged: PostgREST caps a select at 1,000.
-  const companies: Company[] = [];
+  let companies: Company[] = [];
   for (let from = 0; ; from += PAGE) {
     const wanted = options.limit
       ? Math.min(PAGE, options.limit - companies.length)
@@ -344,6 +387,38 @@ async function main() {
     const page = (data ?? []) as Company[];
     companies.push(...page);
     if (page.length < wanted) break;
+  }
+
+  /*
+   * Narrow to companies somebody is actually trying to reach.
+   *
+   * Brave's free tier is 2,000 queries a month and the register holds 11,457
+   * companies with no domain, so a full pass is six years of quota. The leads
+   * are where a domain converts into an email today, and there are 758 of
+   * them — one month's allowance covers the set that matters twice over.
+   */
+  if (options.leadsOnly) {
+    const wanted = new Set<string>();
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await db
+        .from("leads")
+        .select("company_id")
+        .is("email_id", null)
+        .range(from, from + PAGE - 1);
+      if (error) {
+        console.error(`Could not read leads: ${error.message}`);
+        process.exit(1);
+      }
+      const page = (data ?? []) as { company_id: string }[];
+      for (const row of page) wanted.add(row.company_id);
+      if (page.length < PAGE) break;
+    }
+    const before = companies.length;
+    companies = companies.filter((company) => wanted.has(company.id));
+    console.log(
+      `${companies.length} of ${before} companies without a domain are leads ` +
+        `waiting on an address\n`,
+    );
   }
 
   // Search works from the company as an entity, so a generic name is no

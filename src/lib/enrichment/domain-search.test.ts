@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   candidatesFromResults,
+  citedDomains,
   isAggregator,
   searchQueries,
   type SearchResult,
@@ -16,8 +17,8 @@ import {
  * companies. These tests are mostly about that.
  */
 
-function result(url: string, title = "x"): SearchResult {
-  return { url, title, description: "" };
+function result(url: string, title = "x", description = ""): SearchResult {
+  return { url, title, description };
 }
 
 describe("isAggregator", () => {
@@ -26,6 +27,8 @@ describe("isAggregator", () => {
     "www.termene.ro",
     "risco.ro",
     "mfinante.gov.ro",
+    "listafirme.eu",
+    "lege5.ro",
     "linkedin.com",
     "paginiaurii.ro",
   ])("recognises %s", (host) => {
@@ -80,6 +83,40 @@ describe("searchQueries", () => {
   });
 });
 
+describe("citedDomains", () => {
+  it("finds the website an aggregator names in its own title", () => {
+    // Verbatim from a live Brave result for BASICSOFT SRL. This one string is
+    // why search works for Romanian companies at all.
+    expect(
+      citedDomains("Website BASICSOFT SRL din Cluj Napoca https://codespring.ro"),
+    ).toContain("codespring.ro");
+  });
+
+  it("finds one written without a scheme", () => {
+    expect(citedDomains("Vizitati www.codespring.ro pentru detalii")).toContain(
+      "codespring.ro",
+    );
+  });
+
+  it("does not mistake registry identifiers for hostnames", () => {
+    // "CIF17459688" and "J12/1330/2005" are in every aggregator snippet.
+    const found = citedDomains("Despre Basicsoft Srl CIF17459688 J12/1330/2005 CLUJ");
+    expect(found).toEqual([]);
+  });
+
+  it("ignores prose that merely contains a dot", () => {
+    expect(citedDomains("Afli adresa, telefon, email, cifra de afaceri, etc")).toEqual(
+      [],
+    );
+  });
+
+  it("strips markup, because Brave highlights the query terms", () => {
+    expect(citedDomains("<strong>codespring</strong>.ro este site-ul")).toContain(
+      "codespring.ro",
+    );
+  });
+});
+
 describe("candidatesFromResults", () => {
   it("drops the aggregators and keeps the company", () => {
     const candidates = candidatesFromResults([
@@ -89,6 +126,29 @@ describe("candidatesFromResults", () => {
     ]);
 
     expect(candidates.map((c) => c.domain)).toEqual(["codespring.ro"]);
+  });
+
+  it("prefers a domain an aggregator cites over one that merely ranks", () => {
+    // The real shape of a live result set. basicsoft.us is an unrelated
+    // American company that outranks the Romanian one on its own name; the
+    // aggregator we exclude as a destination is the thing naming the answer.
+    const candidates = candidatesFromResults([
+      result("https://basicsoft.us/", "BasicSoft - Business Software That Works"),
+      result(
+        "https://www.listafirme.ro/basicsoft-srl-17459688/",
+        "Website BASICSOFT SRL din Cluj Napoca https://codespring.ro",
+      ),
+    ]);
+
+    expect(candidates[0]).toMatchObject({ domain: "codespring.ro", via: "cited" });
+    expect(candidates[1]).toMatchObject({ domain: "basicsoft.us", via: "result" });
+  });
+
+  it("mines the description as well as the title", () => {
+    const candidates = candidatesFromResults([
+      result("https://termene.ro/firma/x", "TECHNOPILOT SRL", "Site web: technopilot.dev"),
+    ]);
+    expect(candidates.map((c) => c.domain)).toContain("technopilot.dev");
   });
 
   it("keeps the search ordering, which is real information", () => {
