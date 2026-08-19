@@ -7,9 +7,10 @@ re-explained or re-derived. Update it when the answers change.
   `main` does not have it, and no pull request is open.
 - **Last commit:** `a542fe9` — email + password auth and workspace bootstrap,
   plus agent persistence (step 2 below) on top of it.
-- **Green:** 532 tests, clean `typecheck`, `lint` and `build`.
-- **Steps 1–3 are done, and the registry is enriched.** The database holds **11,597 real Cluj software
-  companies** imported from the trade register.
+- **Green:** 562 tests, clean `typecheck`, `lint` and `build`.
+- **Steps 1–3 are done, enriched, and have contacts.** The database holds
+  **11,597 Cluj companies** and **11,217 named decision-makers** — 82% of
+  companies have someone to write to.
 - **Step 1 is done.** A real Supabase project exists (Frankfurt), the schema and
   policies are applied, `verify:rls` passes against it, and signup creates a
   workspace. The app is no longer running on fixtures.
@@ -102,6 +103,7 @@ Neither substitutes for the other, and the second still gates a real user.
 | Auth signup → workspace → `/app` | **Verified** — org + owner membership created, demo marker gone |
 | ANAF response field names | **Verified** — `npm run verify:anaf` passes fully against the live API |
 | ANAF enrichment end to end | **Verified** — 11,438 companies enriched: VAT, e-Factura, inactive flag, real CAEN |
+| Decision-makers from ONRC | **Verified** — 11,217 people, 82% company coverage, no vendor and no cost |
 | ONRC CSV column mapping | **Verified against the real 08.07.2026 export.** Delimiter is `^`; every column mapped |
 | ONRC parsing, filters, streaming | **Verified** — 94 unit tests, plus full runs over the real 690MB file |
 | ONRC import end to end | **Verified** — 4.0M rows read, 11,597 companies written to Supabase |
@@ -313,6 +315,20 @@ unsubscribe endpoint, Copilot.
   authorised for software turning out to be electrical contractors or
   architects. Enrichment overwrites `caen` with ANAF's value because that is
   the one describing the real business.
+- **`OD_REPREZENTANTI_LEGALI` carries birth data; we deliberately do not.** Date
+  and place of birth are present for ~89% of natural persons. They are read to
+  tell a person from a company and then discarded — name plus date and place of
+  birth is a strong identifier for a private individual, and none of it is
+  needed to send a business email. Do not "improve" the importer by storing it.
+- **Most representatives are not decision-makers.** Insolvency practitioners
+  (`lichidator`, `administrator judiciar`, and variants) outnumber
+  administrators in the file. Their presence is a distress signal worth having
+  in the signals engine, but they are not people to email.
+- **A "representative" is often a company.** Foreign parents administer Romanian
+  subsidiaries, so `Sarl`, `Kft`, `Zrt`, `Sro` and friends appear alongside
+  `SRL`. Romanian sole traders (`PFA`, `Întreprindere Individuală`) are the
+  opposite case — a real person whose registered name carries a suffix that
+  should be stripped, not rejected.
 - **A PostgREST `select` string must be one literal.** supabase-js reads it at
   the type level, and `"a" + "b"` widens to `string`, which turns every row into
   `GenericStringError` and fails `typecheck` with a message that names neither
