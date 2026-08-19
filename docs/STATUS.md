@@ -7,7 +7,7 @@ re-explained or re-derived. Update it when the answers change.
   `main` does not have it, and no pull request is open.
 - **Last commit:** `a542fe9` — email + password auth and workspace bootstrap,
   plus agent persistence (step 2 below) on top of it.
-- **Green:** 581 tests, clean `typecheck`, `lint` and `build`.
+- **Green:** 615 tests, clean `typecheck`, `lint` and `build`.
 - **Steps 1–4 are done and visible.** Sourcing produces scored leads from the
   real registry, and `/app` renders them — 117 leads for one agent over the
   Cluj slice.
@@ -315,6 +315,28 @@ unsubscribe endpoint, Copilot.
   first claimant and leaves the rest null rather than dropping the constraint,
   which exists so a crawler and a registry import can recognise the same
   company.
+- **Guessing domains from company names does not work. Measured, not assumed.**
+  `npm run discover:domains` exists and its verifier is sound, but the yield is
+  near zero and the reason is structural:
+  - the correct domain is among the generated candidates **47%** of the time
+    (137 companies whose real domain we know)
+  - of registered domains, **42% do not resolve at all**
+  - of those that do, the CUI appears on the page for about **29%**
+  - compounded, that is single-digit percent — and 0 of 55 on the first live run
+  The deeper problem is that **a Romanian company's legal name is often not its
+  brand**: BASICSOFT SRL trades as codespring.ro, ACDM DIGITAL ONE as
+  thebrightsession.com, MINDMAZE ROMANIA on its Swiss parent's mindmaze.ch. No
+  amount of string manipulation recovers that association.
+  What is worth keeping is the **verifier**: a company must publish its fiscal
+  code on its own site, so `pageMentionsCui` is proof of ownership and is
+  reusable for candidates from any source. The next attempt should get its
+  candidates from a search API, which already knows the brand↔company link.
+- **A name match is not evidence.** The first version accepted a domain when the
+  page contained the company name, and produced `business.com` for Z BUSINESS
+  SRL and `all.ro` for ALL BEFORE SRL. The name is what the candidate was
+  generated from, so matching it is near-circular. A wrong domain is worse than
+  none — it poisons email inference, tech-stack detection and every signal
+  derived from them, and nothing downstream would suspect it.
 - **Only ~1% of registered companies list a website.** 140 of 11,597 in the Cluj
   slice. Everything domain-based — crawling, tech-stack signals, email pattern
   inference — therefore reaches a small minority from the registry alone.

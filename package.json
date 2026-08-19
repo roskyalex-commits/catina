@@ -20,6 +20,7 @@
     "enrich:registry": "tsx scripts/enrich-registry.ts",
     "import:reps": "tsx scripts/import-representatives.ts",
     "source": "tsx scripts/run-sourcing.ts",
+    "discover:domains": "tsx scripts/discover-domains.ts",
     "verify:anaf": "tsx scripts/verify-anaf.ts",
     "verify:rls": "tsx scripts/verify-rls.ts",
     "verify:agents": "tsx scripts/verify-agents.ts",
