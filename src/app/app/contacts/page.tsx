@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Plus, Users } from "lucide-react";
+import { ContactsEnrichmentProvider } from "@/components/contacts/enrichment";
 import { ContactsTable } from "@/components/contacts/table";
 import { ContactsToolbar } from "@/components/contacts/toolbar";
 import { EmptyState, LinkButton, PageHeader } from "@/components/ui/primitives";
@@ -83,8 +84,12 @@ export default async function ContactsPage({
         </nav>
       </div>
 
+      {/*
+        Toolbar and table share one selection, so they share one provider. The
+        page itself is a server component and cannot hold that state.
+      */}
       {tab === "people" && (
-        <>
+        <ContactsEnrichmentProvider>
           <ContactsToolbar initialQuery={query} />
 
           {rows.length === 0 ? (
@@ -129,7 +134,7 @@ export default async function ContactsPage({
               </div>
             </>
           )}
-        </>
+        </ContactsEnrichmentProvider>
       )}
 
       {tab === "companies" && <CompaniesTab rows={rows} />}

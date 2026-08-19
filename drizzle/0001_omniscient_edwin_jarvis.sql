@@ -1,0 +1,1 @@
+ALTER TABLE "leads" ADD COLUMN "enriched_at" timestamp with time zone;

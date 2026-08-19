@@ -386,6 +386,15 @@ export const leads = pgTable(
     sourceLabel: text("source_label"),
     /** The keyword or CAEN code the launch ran on, shown under the chip. */
     sourceQuery: text("source_query"),
+    /**
+     * When the email waterfall last ran for this lead.
+     *
+     * Distinguishes "we looked and found nothing" from "we have not looked",
+     * which `email_id IS NULL` cannot. Without it every bulk re-run would spend
+     * the whole free tier re-asking questions that already came back empty —
+     * and a miss is the common case, not the exception.
+     */
+    enrichedAt: timestamp("enriched_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

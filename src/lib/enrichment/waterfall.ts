@@ -29,7 +29,21 @@ import {
  * gets burned.
  */
 
-export type EmailStatus = "pattern" | "found" | "verified" | "risky" | "invalid";
+/**
+ * Mirrors the `emails.status` check constraint in `src/lib/db/schema.ts`.
+ *
+ * `bounced` is never produced by the waterfall — it is written by the send
+ * path after a real delivery failure. It belongs here anyway, because this type
+ * is also what reads a persisted row back, and a status the database can hold
+ * but the type cannot is a narrowing failure waiting for the first bounce.
+ */
+export type EmailStatus =
+  | "pattern"
+  | "found"
+  | "verified"
+  | "risky"
+  | "invalid"
+  | "bounced";
 
 export type ResolvedEmail = {
   address: string;
@@ -74,8 +88,6 @@ export type WaterfallDeps = {
   mx?: MxChecker;
   /** Vendor providers, in the order they should be tried. */
   providers?: PeopleProvider[];
-  /** Monthly free-tier size per provider, for the budget check. */
-  providerLimits?: Record<string, number>;
   verifier?: MailboxVerifier;
 };
 

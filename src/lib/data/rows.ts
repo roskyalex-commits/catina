@@ -122,6 +122,7 @@ export function contactRowFrom(row: Record<string, unknown>): ContactRow {
             EMAIL_STATUSES.find((status) => status === optionalString(email?.status)) ??
             "pattern",
           confidence: optionalNumber(email?.confidence) ?? 0,
+          isRoleAddress: email?.is_role_address === true,
         }
       : null,
     // `companies` has no phone column — the trade register does not publish

@@ -193,7 +193,15 @@ export function fingerprintTech(html: string, headers: Headers): string[] {
   return [...found].sort();
 }
 
-const ROLE_PREFIXES = new Set([
+/**
+ * Mailbox names that belong to a function rather than a person.
+ *
+ * This distinction is legal, not stylistic. Law 506/2004 requires express prior
+ * consent for commercial email with no B2B exemption, and a published `office@`
+ * is a company's own stated contact route — a materially different object from
+ * `ion.popescu@` scraped off a team page.
+ */
+export const ROLE_PREFIXES = new Set([
   "office",
   "contact",
   "info",
@@ -210,7 +218,22 @@ const ROLE_PREFIXES = new Set([
   "comenzi",
 ]);
 
-function extractEmails(html: string, domain: string): string[] {
+/**
+ * Addresses at this domain found in the markup.
+ *
+ * `roleOnly` is not an optimisation, it is the difference between two legal
+ * objects. Without it, a site with no `office@` falls back to returning *every*
+ * same-domain address it can see, personal ones included. That is acceptable
+ * when the user is analysing their own site during onboarding — they asked, and
+ * it is their data. It is not acceptable when crawling thousands of prospects,
+ * where a harvested `ion.popescu@` is personal data collected without consent.
+ * So the bulk path passes `roleOnly` and accepts finding nothing.
+ */
+export function extractEmails(
+  html: string,
+  domain: string,
+  options: { roleOnly?: boolean } = {},
+): string[] {
   const matches =
     html.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) ?? [];
   const bare = domain.replace(/^www\./, "");
@@ -225,6 +248,7 @@ function extractEmails(html: string, domain: string): string[] {
     ROLE_PREFIXES.has(m.split("@")[0].split("+")[0]),
   );
 
+  if (options.roleOnly) return [...new Set(roleOnly)].slice(0, 10);
   return [...new Set(roleOnly.length ? roleOnly : relevant)].slice(0, 10);
 }
 
@@ -314,4 +338,58 @@ export async function fetchSiteSnapshot(rawUrl: string): Promise<SiteSnapshot> {
     roleEmails: [...roleEmails],
     socialLinks,
   };
+}
+
+/** Where a Romanian company publishes its contact address, in order of likelihood. */
+const CONTACT_PATHS = ["/", "/contact"];
+
+/**
+ * The role addresses published at one prospect's domain.
+ *
+ * Deliberately not `fetchSiteSnapshot`. That reads five pages, parses each with
+ * cheerio, extracts 6,000 characters of text per page and throws when a site is
+ * unreadable — all correct for the one-shot analysis of the *user's own* site
+ * during onboarding, and all wrong for walking thousands of prospects. Here the
+ * only output is a list of addresses, so nothing beyond the regex is needed and
+ * two pages carry almost all the yield.
+ *
+ * Returns `[]` rather than throwing: for prospect crawling, a site that is
+ * down, JavaScript-only or blocking us is the ordinary case, not an error the
+ * caller can do anything about. The waterfall simply moves on to the next step.
+ *
+ * Role addresses only — see `extractEmails`. A company with no published
+ * `office@` yields nothing here, which is the intended answer.
+ */
+export async function fetchRoleEmails(rawDomain: string): Promise<string[]> {
+  let url: URL;
+  try {
+    url = normaliseUrl(rawDomain);
+  } catch {
+    return [];
+  }
+
+  const origin = url.origin;
+  const domain = url.hostname.replace(/^www\./, "");
+  const disallows = await loadRobotsRules(origin);
+  const found = new Set<string>();
+
+  for (const path of CONTACT_PATHS) {
+    if (!isAllowed(path, disallows)) continue;
+
+    const res = await fetchWithTimeout(`${origin}${path}`);
+    if (!res?.ok) continue;
+    if (!res.headers.get("content-type")?.includes("text/html")) continue;
+
+    const raw = await res.text();
+    if (raw.length > MAX_BYTES_PER_PAGE) continue;
+
+    for (const address of extractEmails(raw, domain, { roleOnly: true })) {
+      found.add(address);
+    }
+    // The home page usually carries the footer address; a hit there means the
+    // /contact fetch buys nothing.
+    if (found.size > 0) break;
+  }
+
+  return [...found];
 }

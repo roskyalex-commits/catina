@@ -49,6 +49,8 @@ const secretSchema = z.object({
   LEADMAGIC_API_KEY: z.string().optional(),
   CORESIGNAL_API_KEY: z.string().optional(),
   APIFY_TOKEN: z.string().optional(),
+  /** Which Apify marketplace actor to run; a token alone finds nobody. */
+  APIFY_PEOPLE_ACTOR: z.string().optional(),
   BRAVE_SEARCH_API_KEY: z.string().optional(),
 });
 
@@ -140,6 +142,7 @@ export function describeEnv(bindings?: Record<string, unknown>) {
     "LEADMAGIC_API_KEY",
     "CORESIGNAL_API_KEY",
     "APIFY_TOKEN",
+    "APIFY_PEOPLE_ACTOR",
     "BRAVE_SEARCH_API_KEY",
   ] as const;
 

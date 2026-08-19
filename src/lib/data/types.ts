@@ -63,7 +63,17 @@ export type ContactRow = {
   score: number;
   flames: FlameCount;
   breakdown: ScoreBreakdown;
-  email: { address: string; status: EmailStatus; confidence: number } | null;
+  /**
+   * `isRoleAddress` is carried rather than re-derived from the local part: the
+   * waterfall already decided, and a second opinion in the UI could disagree
+   * with the one the score was computed from.
+   */
+  email: {
+    address: string;
+    status: EmailStatus;
+    confidence: number;
+    isRoleAddress: boolean;
+  } | null;
   phone: string | null;
   importedAt: Date;
   list: { id: string; name: string } | null;

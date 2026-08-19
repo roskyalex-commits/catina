@@ -2,7 +2,8 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { ChevronDown, Download, ListPlus, Search, Sparkles } from "lucide-react";
+import { ChevronDown, Download, ListPlus, Loader2, Search, Sparkles } from "lucide-react";
+import { useContactEnrichment } from "@/components/contacts/enrichment";
 import { Button } from "@/components/ui/primitives";
 
 /**
@@ -16,6 +17,7 @@ export function ContactsToolbar({ initialQuery }: { initialQuery: string }) {
   const searchParams = useSearchParams();
   const [value, setValue] = useState(initialQuery);
   const [, startTransition] = useTransition();
+  const { selected, enrich, running } = useContactEnrichment();
 
   useEffect(() => {
     if (value === initialQuery) return;
@@ -66,9 +68,22 @@ export function ContactsToolbar({ initialQuery }: { initialQuery: string }) {
           Export to…
           <ChevronDown className="h-3.5 w-3.5" aria-hidden />
         </Button>
-        <Button>
-          <Sparkles className="h-4 w-4" aria-hidden />
-          Enrich Email
+        {/*
+          Acts on the table's selection, which is why that state lives in a
+          provider rather than inside the table. Disabled with nothing selected:
+          "enrich everything" is not a button anyone should be able to press by
+          accident when a vendor credit may be behind it.
+        */}
+        <Button
+          onClick={() => enrich([...selected])}
+          disabled={running || selected.size === 0}
+        >
+          {running ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Sparkles className="h-4 w-4" aria-hidden />
+          )}
+          {selected.size > 0 ? `Enrich ${selected.size} selected` : "Enrich Email"}
         </Button>
       </div>
     </div>

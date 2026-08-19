@@ -190,7 +190,12 @@ function emailFor(s: Seed): ContactRow["email"] {
   const local = s.role ? "contact" : `${strip(first)}.${strip(last)}`;
   const confidence =
     s.emailStatus === "verified" ? 0.94 : s.emailStatus === "found" ? 0.71 : 0.42;
-  return { address: `${local}@${s.domain}`, status: s.emailStatus, confidence };
+  return {
+    address: `${local}@${s.domain}`,
+    status: s.emailStatus,
+    confidence,
+    isRoleAddress: s.role,
+  };
 }
 
 /** Romanian diacritics do not belong in an email local part. */
@@ -262,7 +267,7 @@ export function demoDataset(now: Date = new Date()): DemoDataset {
       email: {
         status: email!.status,
         confidence: email!.confidence,
-        isRoleAddress: seed.role,
+        isRoleAddress: email!.isRoleAddress,
       },
       now: base,
     });

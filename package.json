@@ -21,6 +21,7 @@
     "import:reps": "tsx scripts/import-representatives.ts",
     "source": "tsx scripts/run-sourcing.ts",
     "discover:domains": "tsx scripts/discover-domains.ts",
+    "enrich:emails": "tsx scripts/enrich-emails.ts",
     "verify:anaf": "tsx scripts/verify-anaf.ts",
     "verify:rls": "tsx scripts/verify-rls.ts",
     "verify:agents": "tsx scripts/verify-agents.ts",

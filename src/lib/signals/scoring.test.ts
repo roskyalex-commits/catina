@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { scoreLead, summariseScore, type ScoreInput } from "./scoring";
+import {
+  rescoreWithEmail,
+  scoreLead,
+  summariseScore,
+  type ScoreBreakdown,
+  type ScoreInput,
+} from "./scoring";
 import type { Signal } from "./types";
 import type { Icp } from "@/lib/icp/schema";
 import type { SourcedCompany } from "@/lib/sources/types";
@@ -322,5 +328,98 @@ describe("summariseScore", () => {
     const result = scoreLead(base({ signals: [] }));
     expect(summariseScore(result)).toBeTruthy();
     expect(summariseScore(result)).not.toContain("undefined");
+  });
+});
+
+describe("rescoreWithEmail", () => {
+  /** A lead as sourcing leaves it: good fit, no signals, no address. */
+  const at45: ScoreBreakdown = {
+    total: 45,
+    icpFit: { score: 1, weight: 0.45, reasons: [{ label: "Target title", points: 1 }] },
+    signals: { score: 0, weight: 0.35, reasons: [] },
+    contactability: { score: 0, weight: 0.2, reasons: [] },
+    penalties: { total: 0, reasons: [] },
+  };
+
+  it("lifts a lead off the no-email ceiling", () => {
+    const after = rescoreWithEmail(at45, {
+      status: "found",
+      confidence: 0.55,
+      isRoleAddress: true,
+    });
+
+    expect(at45.total).toBe(45);
+    expect(after.total).toBeGreaterThan(45);
+  });
+
+  it("scores a personal address above a role address", () => {
+    const role = rescoreWithEmail(at45, {
+      status: "found",
+      confidence: 0.55,
+      isRoleAddress: true,
+    });
+    const personal = rescoreWithEmail(at45, {
+      status: "found",
+      confidence: 0.55,
+      isRoleAddress: false,
+    });
+
+    expect(personal.total).toBeGreaterThan(role.total);
+  });
+
+  it("agrees with scoreLead rather than reimplementing it", () => {
+    const email = { status: "found" as const, confidence: 0.55, isRoleAddress: true };
+    const full = scoreLead(base({ email }));
+
+    // Same email, same weights: the shortcut must land on the same
+    // contactability the full scorer would compute.
+    expect(rescoreWithEmail(at45, email).contactability.score).toBeCloseTo(
+      full.contactability.score,
+      10,
+    );
+  });
+
+  it("carries a non-email disqualifier through untouched", () => {
+    const insolvent: ScoreBreakdown = { ...at45, total: 0, disqualified: "Insolvency proceedings on record" };
+
+    const after = rescoreWithEmail(insolvent, {
+      status: "verified",
+      confidence: 0.95,
+      isRoleAddress: false,
+    });
+
+    // Finding an address does not make an insolvent company a lead.
+    expect(after.disqualified).toBe("Insolvency proceedings on record");
+    expect(after.total).toBe(0);
+  });
+
+  it("drops its own stale verdict when a later run finds a good address", () => {
+    const bounced: ScoreBreakdown = { ...at45, total: 0, disqualified: "Previous email bounced" };
+
+    const after = rescoreWithEmail(bounced, {
+      status: "verified",
+      confidence: 0.95,
+      isRoleAddress: false,
+    });
+
+    // Inheriting it would leave the lead dead forever on the strength of an
+    // address it no longer uses.
+    expect(after.disqualified).toBeUndefined();
+    expect(after.total).toBeGreaterThan(45);
+  });
+
+  it("disqualifies on an invalid address", () => {
+    const after = rescoreWithEmail(at45, {
+      status: "invalid",
+      confidence: 0.1,
+      isRoleAddress: false,
+    });
+
+    expect(after.disqualified).toBe("Email address is invalid");
+    expect(after.total).toBe(0);
+  });
+
+  it("leaves the score where it was when nothing was found", () => {
+    expect(rescoreWithEmail(at45, undefined).total).toBe(45);
   });
 });

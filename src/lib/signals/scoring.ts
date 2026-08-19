@@ -69,7 +69,7 @@ export function scoreLead(input: ScoreInput): ScoreBreakdown {
 
   const icpFit = scoreIcpFit(input);
   const signals = scoreSignals(input.signals ?? [], now);
-  const contactability = scoreContactability(input);
+  const contactability = scoreContactability(input.email);
   const penalties = scorePenalties(input);
 
   const weighted =
@@ -95,6 +95,67 @@ export function scoreLead(input: ScoreInput): ScoreBreakdown {
   };
 }
 
+/**
+ * Re-score a lead after enrichment resolved (or failed to resolve) an address.
+ *
+ * Enrichment changes exactly one of the four components. Re-running `scoreLead`
+ * would mean re-fetching the agent's ICP, the company and its signals purely to
+ * recompute values that have not moved — and any drift between the two reads
+ * would show up as a score that changed for reasons nobody asked about. So the
+ * other three components are carried over from the stored breakdown verbatim
+ * and only contactability is recomputed, with the same weights and the same
+ * rounding as `scoreLead`.
+ *
+ * The one subtlety is disqualification. A previous enrichment may have
+ * disqualified this lead for a bad address; if the new one is good, that verdict
+ * must be dropped rather than inherited. Non-email disqualifiers (insolvency,
+ * suppression, exclusions) are untouched by enrichment and survive.
+ */
+export function rescoreWithEmail(
+  breakdown: ScoreBreakdown,
+  email: ScoreInput["email"],
+): ScoreBreakdown {
+  const contactability = scoreContactability(email);
+
+  const weighted =
+    breakdown.icpFit.score * WEIGHTS.icpFit +
+    breakdown.signals.score * WEIGHTS.signals +
+    contactability.score * WEIGHTS.contactability;
+
+  const total = Math.round(
+    Math.max(0, Math.min(1, weighted + breakdown.penalties.total)) * 100,
+  );
+
+  const carried = EMAIL_DISQUALIFIERS.has(breakdown.disqualified ?? "")
+    ? undefined
+    : breakdown.disqualified;
+  const disqualified = emailDisqualifier(email) ?? carried;
+
+  return {
+    ...breakdown,
+    total: disqualified ? 0 : total,
+    contactability: { ...contactability, weight: WEIGHTS.contactability },
+    disqualified,
+  };
+}
+
+/**
+ * Reasons an address itself kills a lead.
+ *
+ * Listed once and compared by value, because `rescoreWithEmail` has to tell a
+ * verdict it wrote on a previous pass from one that came from somewhere else.
+ */
+const EMAIL_DISQUALIFIERS = new Set<string>([
+  "Previous email bounced",
+  "Email address is invalid",
+]);
+
+function emailDisqualifier(email: ScoreInput["email"]): string | undefined {
+  if (email?.status === "bounced") return "Previous email bounced";
+  if (email?.status === "invalid") return "Email address is invalid";
+  return undefined;
+}
+
 /** Hard rules. These override the score rather than nudging it. */
 function findDisqualifier(input: ScoreInput): string | undefined {
   if (input.suppressed) return "On your do-not-contact list";
@@ -103,8 +164,8 @@ function findDisqualifier(input: ScoreInput): string | undefined {
       ? "Listed as an inactive taxpayer at ANAF"
       : "Insolvency proceedings on record";
   }
-  if (input.email?.status === "bounced") return "Previous email bounced";
-  if (input.email?.status === "invalid") return "Email address is invalid";
+  const emailProblem = emailDisqualifier(input.email);
+  if (emailProblem) return emailProblem;
 
   const exclusion = matchedExclusion(input);
   if (exclusion) return `Matches your exclusion "${exclusion}"`;
@@ -254,10 +315,8 @@ function scoreSignals(
 }
 
 function scoreContactability(
-  input: ScoreInput,
+  email: ScoreInput["email"],
 ): { score: number; reasons: ScoreReason[] } {
-  const email = input.email;
-
   if (!email) {
     return {
       score: 0,

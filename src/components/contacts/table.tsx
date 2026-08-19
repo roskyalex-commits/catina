@@ -9,9 +9,13 @@ import {
   ChevronRight,
   ExternalLink,
   HelpCircle,
-  Phone,
+  Loader2,
   X,
 } from "lucide-react";
+import {
+  useContactEnrichment,
+  type EnrichState,
+} from "@/components/contacts/enrichment";
 import { ScoreExplanation } from "@/components/leads/score-badge";
 import { Avatar, Flames, relativeTime } from "@/components/ui/primitives";
 import type { ContactRow, FitFeedback } from "@/lib/data/types";
@@ -30,7 +34,9 @@ import { cn } from "@/lib/utils";
  *   breakdown can be compared against the row above it.
  */
 export function ContactsTable({ rows }: { rows: ContactRow[] }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Selection lives in the provider so the toolbar's bulk Enrich button can see
+  // it; without that it had nothing to act on and did nothing.
+  const { selected, toggle, toggleAll, results, enrich } = useContactEnrichment();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Record<string, FitFeedback | null>>({});
 
@@ -42,15 +48,6 @@ export function ContactsTable({ rows }: { rows: ContactRow[] }) {
     [feedback],
   );
 
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   return (
     <div className="scrollbar-thin overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
       <table className="w-full min-w-[1320px] border-collapse text-left">
@@ -61,9 +58,7 @@ export function ContactsTable({ rows }: { rows: ContactRow[] }) {
                 type="checkbox"
                 aria-label="Select all contacts"
                 checked={allSelected}
-                onChange={() =>
-                  setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))
-                }
+                onChange={() => toggleAll(rows.map((r) => r.id))}
                 className="h-4 w-4 accent-[var(--accent)]"
               />
             </th>
@@ -153,29 +148,18 @@ export function ContactsTable({ rows }: { rows: ContactRow[] }) {
                 </td>
 
                 <td className="px-3 py-4 text-[13px]">
-                  {row.email ? (
-                    <span className="flex flex-col gap-0.5">
-                      <span className="whitespace-nowrap">{row.email.address}</span>
-                      <span
-                        className={cn(
-                          "w-fit rounded px-1.5 py-0.5 text-[11px]",
-                          row.email.status === "verified"
-                            ? "bg-success-soft text-success"
-                            : row.email.status === "found"
-                              ? "bg-info-soft text-info"
-                              : "bg-warning-soft text-warning",
-                        )}
-                      >
-                        {row.email.status}
-                      </span>
-                    </span>
-                  ) : (
-                    <EnrichButton icon={AtSign} label="Enrich" />
-                  )}
+                  <EmailCell row={row} state={results[row.id]} onEnrich={() => enrich([row.id])} />
                 </td>
 
-                <td className="whitespace-nowrap px-3 py-4 text-[13px]">
-                  {row.phone ?? <EnrichButton icon={Phone} label="Enrich" />}
+                <td className="whitespace-nowrap px-3 py-4 text-[13px] text-muted">
+                  {/*
+                    No Enrich control here on purpose. The trade register does
+                    not publish phone numbers and no source in the app produces
+                    one, so a button would be a promise nothing can keep.
+                  */}
+                  {row.phone ?? (
+                    <span title="The trade register does not publish phone numbers">—</span>
+                  )}
                 </td>
 
                 <td className="whitespace-nowrap px-3 py-4 text-[13px] text-muted">
@@ -270,16 +254,90 @@ function Detail({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+/**
+ * The email cell: an address, or the button that goes looking for one.
+ *
+ * Three things are shown rather than one, because a blank cell is the least
+ * useful answer available. A found address gets its status pill; a role address
+ * is labelled as such, since `office@` reaches the company rather than the
+ * person and that changes how the message should be written; and a miss reports
+ * *why*, because "no website on file" and "this domain accepts no mail" call
+ * for different things from the user.
+ *
+ * `state` is the just-returned result, `row.email` is what the server rendered.
+ * The former wins while it exists so the cell updates without waiting for the
+ * refresh that follows it.
+ */
+function EmailCell({
+  row,
+  state,
+  onEnrich,
+}: {
+  row: ContactRow;
+  state: EnrichState | undefined;
+  onEnrich: () => void;
+}) {
+  if (state?.phase === "pending") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+        Searching…
+      </span>
+    );
+  }
+
+  const resolved = state?.phase === "done" && state.email ? state.email : row.email;
+
+  if (resolved) {
+    return (
+      <span className="flex flex-col gap-0.5">
+        <span className="whitespace-nowrap">{resolved.address}</span>
+        <span className="flex items-center gap-1">
+          <span
+            className={cn(
+              "w-fit rounded px-1.5 py-0.5 text-[11px]",
+              resolved.status === "verified"
+                ? "bg-success-soft text-success"
+                : resolved.status === "found"
+                  ? "bg-info-soft text-info"
+                  : "bg-warning-soft text-warning",
+            )}
+          >
+            {resolved.status}
+          </span>
+          {resolved.isRoleAddress && (
+            <span className="text-[11px] text-muted">role address</span>
+          )}
+        </span>
+      </span>
+    );
+  }
+
+  if (state?.phase === "done" || state?.phase === "error") {
+    return (
+      <span className="flex flex-col items-start gap-1">
+        <span className="text-[12px] text-muted">{state.note}</span>
+        <EnrichButton icon={AtSign} label="Try again" onClick={onEnrich} />
+      </span>
+    );
+  }
+
+  return <EnrichButton icon={AtSign} label="Enrich" onClick={onEnrich} />;
+}
+
 function EnrichButton({
   icon: Icon,
   label,
+  onClick,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
+  onClick: () => void;
 }) {
   return (
     <button
       type="button"
+      onClick={onClick}
       className="inline-flex items-center gap-1.5 rounded-full bg-background px-2.5 py-1 text-[12px] text-muted transition hover:bg-accent-soft hover:text-accent"
     >
       <Icon className="h-3 w-3" />
