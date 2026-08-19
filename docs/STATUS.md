@@ -3,20 +3,45 @@
 Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
-- **Branch:** `claude/gojiberry-competitor-saas-mglle8` — all work lives here.
-  `main` does not have it, and no pull request is open.
-- **Last commit:** `a542fe9` — email + password auth and workspace bootstrap,
-  plus agent persistence (step 2 below) on top of it.
+- **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
+- **Last commit:** `4946fa8` — domain discovery, built and then measured into
+  the ground (see the landmine; the verifier is the part worth keeping).
 - **Green:** 615 tests, clean `typecheck`, `lint` and `build`.
 - **Steps 1–4 are done and visible.** Sourcing produces scored leads from the
   real registry, and `/app` renders them — 117 leads for one agent over the
-  Cluj slice.
-- **Steps 1–3 are done, enriched, and have contacts.** The database holds
-  **11,597 Cluj companies** and **11,217 named decision-makers** — 82% of
-  companies have someone to write to.
-- **Step 1 is done.** A real Supabase project exists (Frankfurt), the schema and
-  policies are applied, `verify:rls` passes against it, and signup creates a
-  workspace. The app is no longer running on fixtures.
+  Cluj slice. The database holds **11,597 Cluj companies**, **11,438**
+  ANAF-enriched, and **11,217 named decision-makers** (82% of companies have
+  someone to write to).
+- **Step 5 is the whole remaining product.** Every one of those 117 leads scores
+  exactly **45/100** and **none has an email address**. That is the next section
+  worth reading.
+
+## The number to fix: 45
+
+Every lead scores 45, and it is not a coincidence — it is a ceiling. `scoreLead`
+weights ICP fit 0.45, signals 0.35, contactability 0.20. With no email,
+contactability contributes **exactly zero**, so a perfect-fit lead with no
+signals lands at 0.45 × 100 = 45.
+
+The product promise is *paste your website → here are the contacts, with email
+addresses*. The chain stops one step short of the deliverable.
+
+Everything needed already exists and is tested. **Nothing is connected:**
+
+| Asset | State |
+|---|---|
+| `emails` table | Fully modelled, RLS'd as shared reference data. **0 rows.** |
+| `EmailWaterfall.resolve()` | 394 lines, 419 lines of tests. **No callers anywhere.** |
+| Crawler role-address harvesting | `fetchSiteSnapshot` already extracts `roleEmails`. **Onboarding discards them.** |
+| `MxChecker` (DNS-over-HTTPS) | Written, cached, free-provider aware. **Never instantiated in production.** |
+| `CreditLedger` + `SupabaseUsageStore` | Written, atomic RPC. **Unreferenced.** |
+| Both "Enrich" buttons in the UI | Bare `<button>`, **no `onClick`.** |
+
+**But the blocker is supply, not wiring.** The free way to get an email is to
+crawl the prospect's own site for its published `office@`. That needs a domain,
+and **only 1 of the 117 leads has one** (140 of 11,597 companies carry a domain
+at all). Wiring the waterfall today enriches exactly one lead — which is still
+worth doing first, to prove the pipe end to end before widening the inlet.
 
 > If you are reading this in an unzipped export rather than a clone, there is no
 > git history in the folder and `npm install` has to run before anything else.
@@ -112,6 +137,8 @@ Neither substitutes for the other, and the second still gates a real user.
 | ONRC CSV column mapping | **Verified against the real 08.07.2026 export.** Delimiter is `^`; every column mapped |
 | ONRC parsing, filters, streaming | **Verified** — 94 unit tests, plus full runs over the real 690MB file |
 | ONRC import end to end | **Verified** — 4.0M rows read, 11,597 companies written to Supabase |
+| Email waterfall against real leads | **Never run.** `EmailWaterfall.resolve()` has no callers; `emails` has 0 rows |
+| Domain discovery by name-guessing | **Verified as ineffective** — 0 of 55 on the live run, and the reason is structural |
 | Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
 | Claude ICP inference end to end | **Never run** with a real key |
 | Gmail send | Routes not written yet |
@@ -219,10 +246,11 @@ has rows.
    npm run import:onrc -- --file od_firme.csv --stare od_stare_firma.csv      --caen-file od_caen_autorizat.csv --nomenclator . --county CJ --caen 62      --active-only
    ```
 
-   Still to write: `scripts/enrich-registry.ts` (batch through
-   `AnafClient.lookupByCui`, 100 per request at ~1/s). It is blocked on both the
-   database and network egress to ANAF, so `npm run verify:anaf` is the thing to
-   run before trusting it.
+   `scripts/enrich-registry.ts` is written and has run: 11,438 of the 11,597
+   companies came back from ANAF with VAT status, e-Factura registration, the
+   inactive flag and the CAEN they actually file under.
+   `scripts/import-representatives.ts` then added 11,217 decision-makers from
+   `OD_REPREZENTANTI_LEGALI`. Both are re-runnable and idempotent.
 4. ~~**First sourcing run.**~~ **Done.** `src/lib/pipeline/source-run.ts` behind
    `POST /api/v1/sourcing/run`, bounded and synchronous, cursor-paged. Runs
    entirely on the caller's session: leads and job_runs are tenant rows so RLS
@@ -237,9 +265,47 @@ has rows.
    `POST /api/v1/sourcing/run`, bounded to ~25 companies per invocation and
    **synchronous, not queued** — wiring five queue consumers before a single
    lead exists means debugging the queue and the pipeline simultaneously.
-5. **Email waterfall** against real leads. `EmailWaterfall.resolve()` exists and
-   is tested; it needs callers and at least one provider key, or it degrades to
-   MX + role addresses + pattern inference.
+5. **Emails onto leads.** The current work, in four phases. Decisions already
+   taken: a role address like `office@firma.ro` is an acceptable answer; free
+   tiers now and paid later once it works; the deliverable is the **email**, so
+   domain lookup appears below only as plumbing inside the email pipeline.
+
+   **5a — connect the machinery (free, no new keys, reaches ~1 lead).** Write
+   `src/lib/enrichment/enrich-lead.ts`: the missing caller that assembles
+   `WaterfallDeps` from `MxChecker`, `CreditLedger`, `SupabaseUsageStore` +
+   `FREE_TIER_LIMITS` and `allPeopleProviders`, feeds `knownRoleEmails` from a
+   crawl of the prospect's domain, and persists `WaterfallResult.email` to
+   `emails` with `leads.email_id` set. Persist misses too — that is what the
+   table stores failures for, so a dead lookup is never paid for twice.
+   Then `POST /api/v1/leads/[id]/enrich`, `npm run enrich:emails`, and give the
+   two inert Enrich buttons an `onClick`.
+
+   Expected movement, stated up front so the result is not a surprise: a crawled
+   role address is `status: "found"`, confidence 0.55, times the 0.7 role-address
+   penalty → **45 → ~54**. A verified personal address would reach ~65.
+
+   **5b — widen the inlet: domains from search.** This is what takes 5a from one
+   lead to thousands. Name-guessing is measured dead (see the landmine); the
+   structural reason is that a Romanian company's legal name is often not its
+   brand, and **a search engine already knows that association**.
+   `BRAVE_SEARCH_API_KEY` is declared in `env.ts` and wired to nothing; the free
+   tier is ~2,000 queries/month. Query `"<name>" <county> <CUI>`, take the top
+   results as candidates, and **verify with `pageMentionsCui`, which already
+   exists** — the verifier was always the sound half. Measure candidate recall
+   and CUI-proof rate against the 140 known-domain companies before believing it.
+
+   **5c — vendor fallback, metered.** Run the decision gate that was written for
+   exactly this and has never run: `npm run spike:people -- --markets ro`. It
+   probes quota before spending and refuses to start a provider it cannot
+   finish. Hunter's free tier (~25 searches/month) is the one that reliably
+   returns an email with a confidence score. Spend a credit only when the free
+   steps fail *and* the lead scores above a threshold — 25 a month is scarce.
+
+   **5d — verification. Deferred deliberately.** `MailboxVerifier` is an
+   interface with no implementation and cannot have a local one: Workers blocks
+   outbound port 25, so SMTP `RCPT TO` probing is impossible in-process. Nothing
+   reaches `verified` without a vendor, which caps crawled role addresses at
+   `found`. MX + `found` is enough to send.
 6. **Gmail OAuth.** `/api/v1/auth/google/{start,callback}`, storing the refresh
    token encrypted via the existing `src/lib/outreach/crypto.ts`. Needs a Google
    Cloud project first.
@@ -249,6 +315,29 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **Contactability is 20% of the score and is currently always 0.** Hence the
+  flat 45 on every lead. Do not go looking for a scoring bug — the scorer is
+  right and the data is missing.
+- **`emails` has no `org_id`.** It is shared reference data like `companies` and
+  `people`: `authenticated` may select, only the service role may write. A
+  request-scoped client silently inserts nothing. The tenant-scoped half of the
+  relationship is `leads.email_id`, which does carry `org_id`.
+- **`emails.status` allows `bounced`; `EmailStatus` in `waterfall.ts` does
+  not.** The database enum is the wider one. Reconcile before persisting, or a
+  bounce recorded by the send path becomes unrepresentable in the type that
+  reads it back.
+- **`APIFY_PEOPLE_ACTOR` is not in `src/lib/env.ts`.** `ProviderEnv` expects it
+  and `getEnv()` drops it, so it is reachable only through raw `process.env` —
+  meaning any app-side wiring sees Apify as unconfigured while a script sees it
+  working.
+- **`WaterfallDeps.providerLimits` is dead.** Limits come from the `UsageStore`
+  (`FREE_TIER_LIMITS` passed to `SupabaseUsageStore`). Setting the field changes
+  nothing, which is worse than it not existing.
+- **`extractEmails` falls back to *every* same-domain address** when no prefix
+  matches `ROLE_PREFIXES`. Fine for one-shot ICP analysis, wrong for bulk
+  prospect crawling: a personal address harvested without consent is a
+  different legal object from `office@`, and Law 506/2004 does not have a B2B
+  exemption. Prospect crawling must be role-only.
 - **RLS is testable offline now.** It used to be true that unit tests could not
   exercise the tenancy boundary. PGlite removed that constraint, so a policy
   change should come with a case in `src/lib/db/policies.test.ts`. Note the two
