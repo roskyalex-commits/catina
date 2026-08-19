@@ -6,7 +6,7 @@ re-explained or re-derived. Update it when the answers change.
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
 - **Last commit:** `f2a4b61` — the email waterfall is connected, leads carry
   addresses, and domain-from-search is built and waiting on a key.
-- **Green:** 662 tests, clean `typecheck` and `lint`.
+- **Green:** 671 tests, clean `typecheck` and `lint`.
 - **Steps 1–4 are done and visible.** Sourcing produces scored leads from the
   real registry, and `/app` renders them — 758 leads for one agent over the
   Cluj slice. The database holds **11,597 Cluj companies**, **11,438**
@@ -467,13 +467,39 @@ unsubscribe endpoint, Copilot.
   code on its own site, so `pageMentionsCui` is proof of ownership and is
   reusable for candidates from any source. The next attempt should get its
   candidates from a search API, which already knows the brand↔company link.
+- **A company's CUI is usually NOT on its website, whatever the law says.**
+  The whole verifier rests on "a Romanian company must publish its fiscal
+  code", and that is the legal position, not the observed one. Measured over 60
+  companies whose real domain the register already carries: **16 unreachable,
+  5 with the CUI on the home page, 4 only on a deeper page, 35 nowhere we
+  looked.** So the proof step, not the candidate source, is now the binding
+  constraint. Checking `/contact` as well as `/` tripled the bulk yield
+  (2.5% → 7.5%); `PROOF_PATHS` in `scripts/discover-domains.ts` is where to add
+  more if someone finds a page type that pays.
+- **A CUI-anchored citation is not proof, and was tested as one.** "A registry
+  aggregator, on a page naming this exact fiscal code, names this domain as the
+  company's website" sounds like third-party attestation, and it is not
+  circular the way a name match is. It is still only **60% precise** — 25%
+  coverage, 9 right and 6 wrong out of 15, including `aliria.com` for
+  `aliria.net` and `elogicode.ro` for `logicode.ro`. Near-misses are the
+  dangerous kind. It stays a candidate *source*; `pageMentionsCui` stays the
+  only thing that accepts.
+- **Brave rejects `country=RO`.** Its enum has 37 countries and Romania is not
+  among them; passing it 422s the whole request rather than degrading. Only
+  discovered by calling the API. `search_lang=ro` is a different parameter and
+  does accept it.
 - **Searching for a Romanian company returns registry aggregators, not the
-  company.** listafirme.ro, termene.ro, risco.ro, confidas.ro, mfinante and a
-  dozen more exist to rank for "<company name> CUI", and they all display the
-  fiscal code — so `pageMentionsCui`, which is proof of ownership for a real
-  company site, waves every one of them through. `AGGREGATOR_DOMAINS` in
-  `src/lib/enrichment/domain-search.ts` is what makes search viable at all; it
-  is not a quality filter and must not be trimmed for tidiness.
+  company — and that turns out to be the good news.** The aggregator result is
+  where the answer lives: `listafirme.ro`'s own title for BASICSOFT SRL reads
+  *"Website BASICSOFT SRL din Cluj Napoca https://codespring.ro"*. Excluding
+  those hosts as destinations while **mining domains out of their titles and
+  snippets** (`citedDomains`) is what makes search work; without it the same
+  query yields `basicsoft.us`, an unrelated American company.
+  The exclusion half is still load-bearing: every one of those sites displays
+  the fiscal code, so `pageMentionsCui` — proof of ownership for a real company
+  site — would confirm listafirme.ro as the website of all 11,597 companies.
+  `AGGREGATOR_DOMAINS` is not a quality filter and must not be trimmed for
+  tidiness; several entries were added only after showing up in live results.
 - **A name match is not evidence.** The first version accepted a domain when the
   page contained the company name, and produced `business.com` for Z BUSINESS
   SRL and `all.ro` for ALL BEFORE SRL. The name is what the candidate was

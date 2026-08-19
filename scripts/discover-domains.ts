@@ -54,6 +54,8 @@ const CONCURRENCY = 6;
 const DOH = "https://cloudflare-dns.com/dns-query";
 /** Brave's free tier is one query per second; exceeding it returns 429. */
 const BRAVE_PACE_MS = 1100;
+/** UUIDs per `in()` — a few hundred makes a URL PostgREST refuses. */
+const ID_CHUNK = 100;
 
 type Options = {
   limit?: number;
@@ -349,21 +351,10 @@ async function measure(options: Options) {
   );
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
+/** Companies with no domain yet. Paged: PostgREST caps a select at 1,000. */
+async function companiesWithoutDomain(options: Options): Promise<Company[]> {
+  const companies: Company[] = [];
 
-  if (options.search && !brave.isConfigured()) {
-    console.error(
-      "BRAVE_SEARCH_API_KEY is not set. Get a free key at\n" +
-        "  https://brave.com/search/api/  (2,000 queries/month, commercial use allowed)\n" +
-        "then add it to .env.local.",
-    );
-    process.exit(1);
-  }
-  if (options.measure) return measure(options);
-
-  // Companies with no domain yet. Paged: PostgREST caps a select at 1,000.
-  let companies: Company[] = [];
   for (let from = 0; ; from += PAGE) {
     const wanted = options.limit
       ? Math.min(PAGE, options.limit - companies.length)
@@ -388,38 +379,85 @@ async function main() {
     companies.push(...page);
     if (page.length < wanted) break;
   }
+  return companies;
+}
 
-  /*
-   * Narrow to companies somebody is actually trying to reach.
-   *
-   * Brave's free tier is 2,000 queries a month and the register holds 11,457
-   * companies with no domain, so a full pass is six years of quota. The leads
-   * are where a domain converts into an email today, and there are 758 of
-   * them — one month's allowance covers the set that matters twice over.
-   */
-  if (options.leadsOnly) {
-    const wanted = new Set<string>();
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await db
-        .from("leads")
-        .select("company_id")
-        .is("email_id", null)
-        .range(from, from + PAGE - 1);
-      if (error) {
-        console.error(`Could not read leads: ${error.message}`);
-        process.exit(1);
-      }
-      const page = (data ?? []) as { company_id: string }[];
-      for (const row of page) wanted.add(row.company_id);
-      if (page.length < PAGE) break;
+/**
+ * Companies somebody is actually trying to reach, and which have no domain.
+ *
+ * Brave's free tier is 2,000 queries a month and 11,457 companies have no
+ * domain, so a full pass is six years of quota. The leads are where a domain
+ * becomes an email today.
+ *
+ * The leads are read **first** and the companies fetched from them, rather than
+ * loading companies and filtering. Filtering afterwards makes `--limit` cap the
+ * wrong set: `--limit 250` took the first 250 companies in the register, found
+ * 11 of them were leads, and searched those — which is not what anyone asking
+ * for 250 meant.
+ */
+async function leadCompanies(options: Options): Promise<Company[]> {
+  const companyIds = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await db
+      .from("leads")
+      .select("company_id")
+      .is("email_id", null)
+      .order("score", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.error(`Could not read leads: ${error.message}`);
+      process.exit(1);
     }
-    const before = companies.length;
-    companies = companies.filter((company) => wanted.has(company.id));
-    console.log(
-      `${companies.length} of ${before} companies without a domain are leads ` +
-        `waiting on an address\n`,
-    );
+    const page = (data ?? []) as { company_id: string }[];
+    for (const row of page) companyIds.add(row.company_id);
+    if (page.length < PAGE) break;
   }
+
+  // Chunked: several hundred UUIDs in one `in()` is a URL PostgREST rejects.
+  const ids = [...companyIds];
+  const companies: Company[] = [];
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    let query = db
+      .from("companies")
+      .select("id, name, cui, county")
+      .is("domain", null)
+      .not("cui", "is", null)
+      .in("id", ids.slice(i, i + ID_CHUNK));
+    if (options.county) query = query.eq("county", options.county);
+
+    const { data, error } = await query;
+    if (error) {
+      console.error(`Could not read companies: ${error.message}`);
+      process.exit(1);
+    }
+    companies.push(...((data ?? []) as Company[]));
+  }
+
+  console.log(
+    `${companyIds.size} leads are waiting on an address; ` +
+      `${companies.length} of their companies have no domain to work from
+`,
+  );
+  // The limit belongs here, after the set is known — see the note above.
+  return options.limit ? companies.slice(0, options.limit) : companies;
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+
+  if (options.search && !brave.isConfigured()) {
+    console.error(
+      "BRAVE_SEARCH_API_KEY is not set. Get a free key at\n" +
+        "  https://brave.com/search/api/  (2,000 queries/month, commercial use allowed)\n" +
+        "then add it to .env.local.",
+    );
+    process.exit(1);
+  }
+  if (options.measure) return measure(options);
+
+  const companies = options.leadsOnly
+    ? await leadCompanies(options)
+    : await companiesWithoutDomain(options);
 
   // Search works from the company as an entity, so a generic name is no
   // obstacle to it — only name guessing needs a distinctive string.
