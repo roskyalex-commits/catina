@@ -4,8 +4,8 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `6ded9e6` — the email waterfall is connected and leads now
-  carry addresses.
+- **Last commit:** `f2a4b61` — the email waterfall is connected, leads carry
+  addresses, and domain-from-search is built and waiting on a key.
 - **Green:** 662 tests, clean `typecheck` and `lint`.
 - **Steps 1–4 are done and visible.** Sourcing produces scored leads from the
   real registry, and `/app` renders them — 758 leads for one agent over the
@@ -111,6 +111,10 @@ npm run verify:rls     # MUST fully pass before any real user exists
 npm run db:types       # replaces the placeholder Database type (see below)
 ```
 
+The other `verify:*` scripts each drive one route against the running app with
+a throwaway tenant and delete it afterwards. Run them after touching the thing
+they cover: `verify:agents`, `verify:sourcing`, `verify:emails`.
+
 `verify:rls` creates two workspaces and asserts one cannot read the other. It
 is not optional — an un-policied tenant table is a cross-org data leak.
 
@@ -147,7 +151,8 @@ Neither substitutes for the other, and the second still gates a real user.
 | ONRC import end to end | **Verified** — 4.0M rows read, 11,597 companies written to Supabase |
 | Email waterfall against real leads | **Verified** — `npm run enrich:emails`, 3 of 5 leads with a domain resolved, 45 → 54 |
 | Role-address harvesting from prospect sites | **Verified** — 37 of 140 domains (26.4%), no key and no quota |
-| `POST /api/v1/leads/[id]/enrich` | **Written, not driven by a browser** — the bulk script shares its orchestration and persistence |
+| `POST /api/v1/leads/[id]/enrich` | **Verified** — `npm run verify:emails`, 22 checks: RLS, 404s, re-run does not duplicate, score 45 → 54 |
+| The contacts table with an address | **Verified in a browser** — status pill, "role address" label, both Enrich buttons, no overflow at 1280 or 375px |
 | Domain discovery by name-guessing | **Verified as ineffective** — 0 of 55 on the live run, and the reason is structural |
 | Brave Search / domain-search | **From documentation, never run.** Needs `BRAVE_SEARCH_API_KEY`; `BraveSearch.probe()` prints the raw payload |
 | Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
@@ -300,6 +305,12 @@ has rows.
    there, now and later. And `leads.enriched_at` records misses, so a re-run
    does not re-spend on the same empty answers — pass `--force` when something
    has actually changed.
+
+   `npm run verify:emails` drives the route the UI actually hits, with a
+   throwaway tenant and three planted leads — one reachable, one with no domain,
+   one with a domain and no address — and asserts the three different outcomes,
+   that another workspace's lead reads as a 404 rather than a 403, and that a
+   second run does not write a second `emails` row.
 
    **5b — widen the inlet: domains from search. ← next, and it needs a key from
    you.** This is the whole product now: enrichment converts at 26% once it has

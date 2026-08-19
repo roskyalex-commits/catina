@@ -3,6 +3,7 @@ import {
   buildWaterfall,
   enrichLead,
   enrichableLeadFrom,
+  knownRoleEmailsFor,
   saveEnrichment,
   ENRICHABLE_LEAD_COLUMNS,
 } from "@/lib/enrichment/enrich-lead";
@@ -76,22 +77,26 @@ export async function POST(
       return NextResponse.json({ error: "No such lead." }, { status: 404 });
     }
 
+    const admin = createSupabaseAdminClient();
     const lead = enrichableLeadFrom(data as Record<string, unknown>);
+
+    // A role address already harvested for this company answers the question
+    // without a fetch. `emails` is shared reference data, so this is likely to
+    // hit even the first time a given user clicks Enrich on a given company.
+    const known = lead.companyId
+      ? await knownRoleEmailsFor(admin, [lead.companyId])
+      : new Map<string, string[]>();
 
     // Asking from the UI is an explicit instruction, so a previous empty result
     // does not stand in the way. The bulk script is the one that must not
     // re-spend, and it leaves `force` off.
     const outcome = await enrichLead(
-      { waterfall: buildWaterfall(createSupabaseAdminClient(), orgId) },
-      lead,
+      { waterfall: buildWaterfall(admin, orgId) },
+      { ...lead, knownRoleEmails: known.get(lead.companyId ?? "") },
       { force: true },
     );
 
-    const saved = await saveEnrichment(
-      { admin: createSupabaseAdminClient(), scoped: supabase },
-      lead,
-      outcome,
-    );
+    const saved = await saveEnrichment({ admin, scoped: supabase }, lead, outcome);
     if (saved.error) throw new Error(saved.error);
 
     return NextResponse.json({

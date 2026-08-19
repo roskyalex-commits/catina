@@ -26,6 +26,7 @@
     "verify:rls": "tsx scripts/verify-rls.ts",
     "verify:agents": "tsx scripts/verify-agents.ts",
     "verify:sourcing": "tsx scripts/verify-sourcing.ts",
+    "verify:emails": "tsx scripts/verify-emails.ts",
     "spike:people": "tsx scripts/spike-people-coverage.ts",
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare preview",
