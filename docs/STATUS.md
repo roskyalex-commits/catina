@@ -4,44 +4,52 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `4946fa8` — domain discovery, built and then measured into
-  the ground (see the landmine; the verifier is the part worth keeping).
-- **Green:** 615 tests, clean `typecheck`, `lint` and `build`.
+- **Last commit:** `6ded9e6` — the email waterfall is connected and leads now
+  carry addresses.
+- **Green:** 642 tests, clean `typecheck` and `lint`.
 - **Steps 1–4 are done and visible.** Sourcing produces scored leads from the
-  real registry, and `/app` renders them — 117 leads for one agent over the
+  real registry, and `/app` renders them — 758 leads for one agent over the
   Cluj slice. The database holds **11,597 Cluj companies**, **11,438**
   ANAF-enriched, and **11,217 named decision-makers** (82% of companies have
   someone to write to).
-- **Step 5 is the whole remaining product.** Every one of those 117 leads scores
-  exactly **45/100** and **none has an email address**. That is the next section
-  worth reading.
+- **Step 5a is done and proved on live data.** The waterfall is connected, 37
+  role addresses are harvested, and the first enriched leads moved **45 → 54**.
+- **Step 5b is now the whole product.** Everything is bounded by one number:
+  only **1% of companies have a domain**, and without one there is no free way
+  to reach anybody. Read the next section.
 
-## The number to fix: 45
+## The 45-point ceiling, and what lifting it costs
 
-Every lead scores 45, and it is not a coincidence — it is a ceiling. `scoreLead`
-weights ICP fit 0.45, signals 0.35, contactability 0.20. With no email,
-contactability contributes **exactly zero**, so a perfect-fit lead with no
-signals lands at 0.45 × 100 = 45.
+Every lead used to score exactly 45, and it was not a coincidence — it was a
+ceiling. `scoreLead` weights ICP fit 0.45, signals 0.35, contactability 0.20.
+With no email, contactability contributes **exactly zero**, so a perfect-fit
+lead with no signals lands at 0.45 × 100 = 45.
 
-The product promise is *paste your website → here are the contacts, with email
-addresses*. The chain stops one step short of the deliverable.
+That is now fixed, and the fix works. What it revealed is where the real
+constraint lives.
 
-Everything needed already exists and is tested. **Nothing is connected:**
+**Measured on the live database, not estimated:**
 
-| Asset | State |
+| Step | Result |
 |---|---|
-| `emails` table | Fully modelled, RLS'd as shared reference data. **0 rows.** |
-| `EmailWaterfall.resolve()` | 394 lines, 419 lines of tests. **No callers anywhere.** |
-| Crawler role-address harvesting | `fetchSiteSnapshot` already extracts `roleEmails`. **Onboarding discards them.** |
-| `MxChecker` (DNS-over-HTTPS) | Written, cached, free-provider aware. **Never instantiated in production.** |
-| `CreditLedger` + `SupabaseUsageStore` | Written, atomic RPC. **Unreferenced.** |
-| Both "Enrich" buttons in the UI | Bare `<button>`, **no `onClick`.** |
+| Companies with a domain | **140 of 11,597** — 1.2% |
+| Of those, publishing a role address | **37 of 140** — **26.4%** |
+| Leads with a domain, after sourcing 758 | **5** |
+| Of those, resolved to an address | **3 of 5** — 60% |
+| Score movement on a hit | **45 → 54**, every time |
 
-**But the blocker is supply, not wiring.** The free way to get an email is to
-crawl the prospect's own site for its published `office@`. That needs a domain,
-and **only 1 of the 117 leads has one** (140 of 11,597 companies carry a domain
-at all). Wiring the waterfall today enriches exactly one lead — which is still
-worth doing first, to prove the pipe end to end before widening the inlet.
+So the pipeline converts at roughly **26%** once it has a domain, and the free
+path is genuinely free — no key, no quota, one page fetch per company. The
+funnel does not leak at enrichment. It leaks at the very top: 99% of the
+register has no website on file, so there is nothing to crawl.
+
+**That makes domain discovery the highest-value thing left** — not as a feature
+in its own right, but because it is the only input the email pipeline is short
+of. Each domain found is worth ~0.26 of an email.
+
+The 54 is a role address (`office@`, `contact@`) at 0.55 confidence with the
+0.7 role-address penalty. A verified personal address would reach ~65, which
+needs either a vendor (step 5c) or mailbox verification (step 5d).
 
 > If you are reading this in an unzipped export rather than a clone, there is no
 > git history in the folder and `npm install` has to run before anything else.
@@ -137,7 +145,9 @@ Neither substitutes for the other, and the second still gates a real user.
 | ONRC CSV column mapping | **Verified against the real 08.07.2026 export.** Delimiter is `^`; every column mapped |
 | ONRC parsing, filters, streaming | **Verified** — 94 unit tests, plus full runs over the real 690MB file |
 | ONRC import end to end | **Verified** — 4.0M rows read, 11,597 companies written to Supabase |
-| Email waterfall against real leads | **Never run.** `EmailWaterfall.resolve()` has no callers; `emails` has 0 rows |
+| Email waterfall against real leads | **Verified** — `npm run enrich:emails`, 3 of 5 leads with a domain resolved, 45 → 54 |
+| Role-address harvesting from prospect sites | **Verified** — 37 of 140 domains (26.4%), no key and no quota |
+| `POST /api/v1/leads/[id]/enrich` | **Written, not driven by a browser** — the bulk script shares its orchestration and persistence |
 | Domain discovery by name-guessing | **Verified as ineffective** — 0 of 55 on the live run, and the reason is structural |
 | Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
 | Claude ICP inference end to end | **Never run** with a real key |
@@ -270,7 +280,7 @@ has rows.
    tiers now and paid later once it works; the deliverable is the **email**, so
    domain lookup appears below only as plumbing inside the email pipeline.
 
-   **5a — connect the machinery (free, no new keys, reaches ~1 lead).** Write
+   **5a — connect the machinery.** ~~Write
    `src/lib/enrichment/enrich-lead.ts`: the missing caller that assembles
    `WaterfallDeps` from `MxChecker`, `CreditLedger`, `SupabaseUsageStore` +
    `FREE_TIER_LIMITS` and `allPeopleProviders`, feeds `knownRoleEmails` from a
@@ -280,12 +290,20 @@ has rows.
    Then `POST /api/v1/leads/[id]/enrich`, `npm run enrich:emails`, and give the
    two inert Enrich buttons an `onClick`.
 
-   Expected movement, stated up front so the result is not a surprise: a crawled
-   role address is `status: "found"`, confidence 0.55, times the 0.7 role-address
-   penalty → **45 → ~54**. A verified personal address would reach ~65.
+   two inert Enrich buttons an `onClick`.~~ **Done, and the predicted number was
+   the observed one: 45 → 54, three times out of three.**
 
-   **5b — widen the inlet: domains from search.** This is what takes 5a from one
-   lead to thousands. Name-guessing is measured dead (see the landmine); the
+   Two things worth knowing before continuing. Role addresses are harvested
+   **per company** (`npm run enrich:emails -- --companies`), not per lead:
+   `office@firma.ro` belongs to the company, so one fetch serves every lead
+   there, now and later. And `leads.enriched_at` records misses, so a re-run
+   does not re-spend on the same empty answers — pass `--force` when something
+   has actually changed.
+
+   **5b — widen the inlet: domains from search. ← next, and it needs a key from
+   you.** This is the whole product now: enrichment converts at 26% once it has
+   a domain, and 99% of companies have none, so every domain found is worth
+   ~0.26 of an email. Name-guessing is measured dead (see the landmine); the
    structural reason is that a Romanian company's legal name is often not its
    brand, and **a search engine already knows that association**.
    `BRAVE_SEARCH_API_KEY` is declared in `env.ts` and wired to nothing; the free
