@@ -1,0 +1,274 @@
+/**
+ * Enriches imported companies with live ANAF data.
+ *
+ *   npm run enrich:registry -- --limit 200          # try it on a few first
+ *   npm run enrich:registry -- --county Cluj        # a whole slice
+ *   npm run enrich:registry -- --refresh            # re-enrich, ignoring cache
+ *
+ * The ONRC import gives you a company and its *authorised* activities. This
+ * adds what ANAF knows, which is a different and more useful set of facts:
+ *
+ *   - the activity the company actually files under, which frequently differs
+ *     from anything it authorised (a company authorised for software may in
+ *     fact be an electrical contractor — see docs/STATUS.md)
+ *   - VAT registration, VAT-on-collection, e-Factura enrolment
+ *   - whether ANAF lists it as an inactive taxpayer — the earliest public
+ *     distress signal there is
+ *   - revenue, profit and headcount from the annual filing, plus the previous
+ *     year so growth can be computed
+ *
+ * Free, no key, no quota. The only cost is time: ANAF allows ~1 request per
+ * second, and a request carries up to 100 CUIs, so the VAT pass runs at roughly
+ * 6,000 companies a minute. Financial statements are one request per company
+ * per year, which is the slow part — hence `--skip-financials` for a quick
+ * first pass.
+ */
+import { createClient } from "@supabase/supabase-js";
+import { AnafClient, type AnafCompany } from "../src/lib/sources/anaf/client";
+import { requireEnv } from "./load-env";
+
+const VAT_BATCH = 100;
+const WRITE_BATCH = 200;
+
+type Options = {
+  limit?: number;
+  county?: string;
+  refresh: boolean;
+  skipFinancials: boolean;
+  year: number;
+};
+
+function parseArgs(argv: string[]): Options {
+  const options: Options = {
+    refresh: false,
+    skipFinancials: false,
+    // Filings lag by roughly a year; last year is the newest likely to exist.
+    year: new Date().getUTCFullYear() - 1,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const next = () => argv[(i += 1)];
+    switch (argv[i]) {
+      case "--limit":
+        options.limit = Number(next());
+        break;
+      case "--county":
+        options.county = next();
+        break;
+      case "--year":
+        options.year = Number(next());
+        break;
+      case "--refresh":
+        options.refresh = true;
+        break;
+      case "--skip-financials":
+        options.skipFinancials = true;
+        break;
+      default:
+        if (argv[i].startsWith("--")) throw new Error(`Unknown flag: ${argv[i]}`);
+    }
+  }
+  return options;
+}
+
+type Row = { id: string; cui: string; name: string };
+
+/** What we learned about one company, ready to write back. */
+type Update = {
+  id: string;
+  caen?: string;
+  vat_registered?: boolean;
+  vat_on_collection?: boolean;
+  e_factura_registered?: boolean;
+  insolvency_status?: string | null;
+  revenue_ron?: number | null;
+  revenue_prev_ron?: number | null;
+  profit_ron?: number | null;
+  employees_anaf?: number | null;
+  financials_year?: number | null;
+  last_enriched_at: string;
+};
+
+function updateFromCompany(id: string, company: AnafCompany): Update {
+  return {
+    id,
+    // ANAF's CAEN is the activity the company files under. It is the more
+    // truthful of the two: ONRC lists everything a company is *allowed* to do,
+    // which is routinely a dozen activities it has never performed.
+    caen: company.caen,
+    vat_registered: company.vatRegistered,
+    vat_on_collection: company.vatOnCollection,
+    e_factura_registered: company.eFacturaRegistered,
+    // Null rather than a string when ANAF does not list the company as
+    // inactive: absence of a distress record is not a record saying "healthy".
+    insolvency_status: company.inactive
+      ? `inactiv${company.inactiveSince ? ` din ${company.inactiveSince}` : ""}`
+      : null,
+    last_enriched_at: new Date().toISOString(),
+  };
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+
+  const supabase = createClient(
+    requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
+    requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  );
+  const anaf = new AnafClient();
+
+  // --- pick the companies to enrich -----------------------------------------
+  /*
+   * Paged, because PostgREST caps a select at 1,000 rows and says nothing about
+   * it — no error, no truncation flag, just a short array. An unpaged query
+   * silently enriched the first tenth of the slice and reported success.
+   */
+  const PAGE = 1000;
+  const rows: Row[] = [];
+
+  for (let from = 0; ; from += PAGE) {
+    const wanted = options.limit
+      ? Math.min(PAGE, options.limit - rows.length)
+      : PAGE;
+    if (wanted <= 0) break;
+
+    let query = supabase
+      .from("companies")
+      .select("id, cui, name")
+      .not("cui", "is", null)
+      .order("created_at", { ascending: true })
+      .range(from, from + wanted - 1);
+
+    if (options.county) query = query.eq("county", options.county);
+    // Without --refresh, only companies never enriched. Makes the script
+    // resumable: interrupt it, run it again, it picks up where it stopped.
+    if (!options.refresh) query = query.is("last_enriched_at", null);
+
+    const { data, error } = await query;
+    if (error) {
+      console.error(`Could not read companies: ${error.message}`);
+      process.exit(1);
+    }
+    const page = (data ?? []) as Row[];
+    rows.push(...page);
+    if (page.length < wanted) break;
+  }
+  if (rows.length === 0) {
+    console.log(
+      "Nothing to enrich." +
+        (options.refresh ? "" : " Everything matching has been enriched; use --refresh to redo it."),
+    );
+    return;
+  }
+
+  const batches = Math.ceil(rows.length / VAT_BATCH);
+  console.log(
+    `Enriching ${rows.length} companies` +
+      (options.county ? ` in ${options.county}` : "") +
+      `\n  VAT/status: ${batches} request(s) at ~1/s` +
+      (options.skipFinancials
+        ? "\n  financials: skipped"
+        : `\n  financials: ${rows.length} request(s) for ${options.year}, ~${Math.ceil(rows.length / 55)} min`) +
+      "\n",
+  );
+
+  const byCui = new Map(rows.map((row) => [row.cui, row]));
+  const updates = new Map<string, Update>();
+  let notFound = 0;
+
+  // --- pass 1: VAT, status, real CAEN ---------------------------------------
+  for (let i = 0; i < rows.length; i += VAT_BATCH) {
+    const batch = rows.slice(i, i + VAT_BATCH);
+    let found: AnafCompany[] = [];
+    try {
+      found = await anaf.lookupByCui(batch.map((row) => row.cui));
+    } catch (fetchError) {
+      // One bad batch must not lose the run. The queue in AnafClient survives a
+      // rejection, so the next batch still goes out.
+      console.error(
+        `\n  batch at ${i} failed: ${fetchError instanceof Error ? fetchError.message : fetchError}`,
+      );
+      continue;
+    }
+
+    for (const company of found) {
+      const row = byCui.get(company.cui);
+      if (row) updates.set(row.id, updateFromCompany(row.id, company));
+    }
+    notFound += batch.length - found.length;
+    process.stdout.write(
+      `\r  VAT pass: ${Math.min(i + VAT_BATCH, rows.length)}/${rows.length}`,
+    );
+  }
+  console.log(`\n  matched ${updates.size}, not registered for tax ${notFound}\n`);
+
+  // --- pass 2: the annual filing --------------------------------------------
+  if (!options.skipFinancials) {
+    let withRevenue = 0;
+    let done = 0;
+
+    for (const row of rows) {
+      done += 1;
+      try {
+        const current = await anaf.fetchFinancials(row.cui, options.year);
+        const previous = await anaf.fetchFinancials(row.cui, options.year - 1);
+
+        if (current || previous) {
+          const update =
+            updates.get(row.id) ??
+            ({ id: row.id, last_enriched_at: new Date().toISOString() } as Update);
+
+          // A company that has not filed is not a company with no revenue, so
+          // an absent filing stays null rather than becoming zero.
+          update.revenue_ron = current?.revenueRon ?? null;
+          update.revenue_prev_ron = previous?.revenueRon ?? null;
+          update.profit_ron = current?.profitRon ?? null;
+          update.employees_anaf = current?.employees ?? null;
+          update.financials_year = current ? options.year : null;
+          updates.set(row.id, update);
+          if (current?.revenueRon != null) withRevenue += 1;
+        }
+      } catch {
+        // A single unfiled or unreadable year should not stop the run.
+      }
+      if (done % 25 === 0 || done === rows.length) {
+        process.stdout.write(`\r  financials: ${done}/${rows.length}`);
+      }
+    }
+    console.log(`\n  ${withRevenue} companies with a ${options.year} revenue figure\n`);
+  }
+
+  // --- write ----------------------------------------------------------------
+  const list = [...updates.values()];
+  if (list.length === 0) {
+    console.log("Nothing matched at ANAF — nothing written.");
+    return;
+  }
+
+  let written = 0;
+  for (let i = 0; i < list.length; i += WRITE_BATCH) {
+    const batch = list.slice(i, i + WRITE_BATCH);
+    // One statement per row: these are updates to existing companies, and an
+    // upsert keyed on id would need every not-null column restated.
+    const results = await Promise.all(
+      batch.map(({ id, ...fields }) =>
+        supabase.from("companies").update(fields).eq("id", id),
+      ),
+    );
+    const failed = results.find((result) => result.error);
+    if (failed?.error) {
+      console.error(`\nWrite failed: ${failed.error.message}`);
+      console.error(`Wrote ${written} before failing. Re-running resumes safely.`);
+      process.exit(1);
+    }
+    written += batch.length;
+    process.stdout.write(`\r  writing: ${written}/${list.length}`);
+  }
+
+  console.log(`\n✓ Enriched ${written} companies`);
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

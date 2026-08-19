@@ -209,6 +209,19 @@ export class AnafClient {
           ...init?.headers,
         },
       });
+      /*
+       * 404 means "no such taxpayer", not "the service is broken".
+       *
+       * Observed against the live API, which is the only way this could have
+       * been known: ANAF answers a lookup for an unregistered CUI with a 404
+       * rather than an empty `found` array. Treating that as an error made a
+       * single unknown CUI throw — fatal when enriching thousands of registry
+       * rows, a meaningful share of which are no longer registered for tax.
+       *
+       * Null propagates as "nothing found" and the callers already handle it.
+       */
+      if (response.status === 404) return null;
+
       if (!response.ok) {
         throw new AnafError(
           `ANAF returned ${response.status} for ${url}`,
@@ -267,6 +280,10 @@ export class AnafClient {
           body: JSON.stringify(payload),
         }),
       );
+
+      // A 404 from `fetchJson` means none of this batch is registered for tax —
+      // ordinary for registry rows, not a schema problem.
+      if (raw === null) continue;
 
       const parsed = tvaResponseSchema.safeParse(raw);
       if (!parsed.success) {

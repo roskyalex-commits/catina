@@ -25,9 +25,16 @@ import { AnafClient, normaliseCui } from "../src/lib/sources/anaf/client";
  * signal about our code rather than about an obscure company.
  */
 const FIXTURES = [
-  { cui: "14399840", hint: "Dedeman SRL" },
-  { cui: "6300978", hint: "Banca Transilvania SA" },
-  { cui: "14970199", hint: "eMAG / Dante International SA" },
+  // Hints corrected against the live API: 14399840 is Dante International
+  // (eMAG), not Dedeman, and 14970199 files nothing at all. Getting these
+  // wrong made the client look broken when it was reporting the truth.
+  { cui: "14399840", hint: "Dante International SA (eMAG)" },
+  // Corrected against the live API: 6300978 is not a registered CUI and ANAF
+  // 404s on it. Banca Transilvania is 5022670.
+  { cui: "5022670", hint: "Banca Transilvania SA" },
+  // From our own imported Cluj slice — a small company that files every year,
+  // which is the case the product actually depends on.
+  { cui: "16238930", hint: "Terabit SA (Cluj)" },
 ];
 
 let failures = 0;

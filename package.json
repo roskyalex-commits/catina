@@ -17,6 +17,7 @@
     "db:types": "tsx scripts/gen-types.ts",
     "db:setup": "npm run db:push && npm run db:policies",
     "import:onrc": "tsx scripts/import-onrc.ts",
+    "enrich:registry": "tsx scripts/enrich-registry.ts",
     "verify:anaf": "tsx scripts/verify-anaf.ts",
     "verify:rls": "tsx scripts/verify-rls.ts",
     "verify:agents": "tsx scripts/verify-agents.ts",
