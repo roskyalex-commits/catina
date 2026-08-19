@@ -346,6 +346,14 @@ unsubscribe endpoint, Copilot.
   `SRL`. Romanian sole traders (`PFA`, `Întreprindere Individuală`) are the
   opposite case — a real person whose registered name carries a suffix that
   should be stripped, not rejected.
+- **A local midnight is the previous day in UTC.** `toISOString().slice(0, 10)`
+  is the obvious way to key a day and it is wrong here: Romania is UTC+2/+3, so
+  the axis labels and the run buckets landed on different days and every chart
+  series read as flat zero. Use the local-date helpers in `dashboard.ts` and
+  `insights.ts`.
+- **Log `error.message`, not the error object.** A PostgrestError prints as `{}`
+  through `console.error("...", { error })`, which is how a missing column
+  turned into an unexplained empty overlay.
 - **A PostgREST `select` string must be one literal.** supabase-js reads it at
   the type level, and `"a" + "b"` widens to `string`, which turns every row into
   `GenericStringError` and fails `typecheck` with a message that names neither

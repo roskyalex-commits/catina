@@ -29,7 +29,7 @@ export type ContactPage = {
  * `GenericStringError`.
  */
 export const LEAD_COLUMNS =
-  "id, score, score_breakdown, source_label, source_query, fit_feedback, agent_id, created_at, people(full_name, title), companies(name, domain, country, county, caen, phone), emails(address, status, confidence), lists(id, name)";
+  "id, score, score_breakdown, source_label, source_query, fit_feedback, agent_id, created_at, people(full_name, title), companies(name, domain, country, county, caen), emails(address, status, confidence), lists(id, name)";
 
 /**
  * Filtering runs here rather than in the page so that the same predicate serves
@@ -89,7 +89,7 @@ export async function listContacts(
 
   const { data, error, count } = await query;
   if (error) {
-    console.error("Listing contacts failed", { error });
+    console.error("Listing contacts failed:", error.message, error.details ?? "");
     return { rows: [], total: 0, page, perPage };
   }
 

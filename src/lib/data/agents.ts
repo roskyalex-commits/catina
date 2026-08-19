@@ -48,7 +48,7 @@ async function countsByAgent(
     .limit(10000);
 
   if (error) {
-    console.error("Counting leads failed", { error });
+    console.error("Counting leads failed:", error.message);
     return counts;
   }
 
@@ -79,7 +79,7 @@ export async function listAgents(): Promise<AgentSummary[]> {
     .order("created_at", { ascending: false });
 
   if (error) {
-    console.error("Listing agents failed", { error });
+    console.error("Listing agents failed:", error.message);
     return [];
   }
 
@@ -106,7 +106,7 @@ export async function getAgent(id: string): Promise<AgentDetail | null> {
     .maybeSingle();
 
   if (error) {
-    console.error("Loading agent failed", { id, error });
+    console.error("Loading agent failed:", id, error.message);
     return null;
   }
   if (!data) return null;

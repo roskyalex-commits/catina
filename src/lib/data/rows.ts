@@ -124,7 +124,9 @@ export function contactRowFrom(row: Record<string, unknown>): ContactRow {
           confidence: optionalNumber(email?.confidence) ?? 0,
         }
       : null,
-    phone: optionalString(company?.phone),
+    // `companies` has no phone column — the trade register does not publish
+    // one. Null rather than a lookup that would always fail.
+    phone: null,
     importedAt: optionalDate(row.created_at) ?? new Date(0),
     list: list
       ? {

@@ -7,6 +7,16 @@ import type { InsightsData, LaunchChip, RangeKey } from "./types";
 const DAY = 86_400_000;
 
 /**
+ * A YYYY-MM-DD key in local time. See the note in `dashboard.ts`: using
+ * `toISOString()` on a local midnight silently shifts the whole grid a day.
+ */
+function localIso(date: Date): string {
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
  * The per-agent launch grid.
  *
  * Columns run newest-first, matching the reference: the user cares what
@@ -20,7 +30,7 @@ export async function getInsights(range: RangeKey = "30d"): Promise<InsightsData
   const days = Array.from({ length: dayCount }, (_, i) => {
     const day = new Date(base.getTime() - i * DAY);
     return {
-      iso: day.toISOString().slice(0, 10),
+      iso: localIso(day),
       day: day
         .toLocaleDateString("en-GB", { month: "short", day: "numeric" })
         .toUpperCase(),
@@ -145,7 +155,7 @@ async function liveInsights(
       if (optionalString(run.agent_id) !== agentId) continue;
       const at = run.created_at ? new Date(String(run.created_at)) : null;
       if (!at || Number.isNaN(at.getTime())) continue;
-      const iso = at.toISOString().slice(0, 10);
+      const iso = localIso(at);
       if (!cells[iso]) continue;
 
       cells[iso].push({

@@ -10,6 +10,20 @@ const DAY = 86_400_000;
 const EMPTY_CHART: ChartData = { labels: [], series: [] };
 
 /**
+ * A YYYY-MM-DD key in **local** time.
+ *
+ * `toISOString().slice(0, 10)` looks like the obvious way to do this and is
+ * wrong: local midnight in Romania (UTC+2/+3) is the previous day in UTC, so
+ * the axis labels and the run buckets landed on different days and every
+ * series read as flat zero.
+ */
+function localIso(date: Date): string {
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
  * The four series are not the reference product's four.
  *
  * Theirs are Leads created / Invitations sent / Messages sent / Emails sent,
@@ -102,7 +116,7 @@ async function liveDashboard(range: RangeKey): Promise<DashboardData> {
       scoped().in("status", ["queued", "sent", "replied"]),
       supabase
         .from("job_runs")
-        .select("id, kind, status, title, subtitle, leads_found, created_at")
+        .select("id, kind, status, title, subtitle, leads_found, stats, created_at")
         .eq("org_id", orgId)
         .gte("created_at", since.toISOString())
         .order("created_at", { ascending: false })
@@ -176,7 +190,7 @@ function chartFromRuns(
 
   for (let i = days - 1; i >= 0; i -= 1) {
     const day = new Date(base.getTime() - i * DAY);
-    const iso = day.toISOString().slice(0, 10);
+    const iso = localIso(day);
     labels.push(day.toLocaleDateString("en-GB", { month: "short", day: "numeric" }));
     buckets.set(iso, { leads: 0, companies: 0 });
   }
@@ -184,7 +198,7 @@ function chartFromRuns(
   for (const run of runs) {
     const at = run.created_at ? new Date(String(run.created_at)) : null;
     if (!at || Number.isNaN(at.getTime())) continue;
-    const bucket = buckets.get(at.toISOString().slice(0, 10));
+    const bucket = buckets.get(localIso(at));
     if (!bucket) continue;
     bucket.leads += Number(run.leads_found ?? 0);
     const stats = run.stats as { companiesConsidered?: number } | null;
