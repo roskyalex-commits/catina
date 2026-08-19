@@ -12,7 +12,20 @@
  * broken for a reason that has nothing to do with the mapping.
  */
 
-const DELIMITER_CANDIDATES = [";", ",", "\t", "|"] as const;
+/**
+ * `^` leads because it is what ONRC actually publishes — an unusual choice, and
+ * not one anybody would guess. It is also the safest of the five: a caret never
+ * occurs in a company name or a Romanian address, so unlike `,` or `;` it needs
+ * no quoting and can never be confused with content.
+ */
+const DELIMITER_CANDIDATES = ["^", ";", ",", "\t", "|"] as const;
+
+/**
+ * Used when a header contains none of the candidates — a single-column file.
+ * Named rather than positional: this was `DELIMITER_CANDIDATES[1]`, so adding a
+ * new candidate at the front silently changed the fallback.
+ */
+const DEFAULT_DELIMITER = ",";
 const QUOTE = '"';
 
 /**
@@ -43,7 +56,7 @@ export function sniffDelimiter(headerLine: string): string {
       bestCount = count;
     }
   }
-  return bestCount > 0 ? best : DELIMITER_CANDIDATES[1];
+  return bestCount > 0 ? best : DEFAULT_DELIMITER;
 }
 
 /** Strips the UTF-8 BOM Excel writes, which would otherwise corrupt column 1. */

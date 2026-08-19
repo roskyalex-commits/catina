@@ -7,7 +7,9 @@ re-explained or re-derived. Update it when the answers change.
   `main` does not have it, and no pull request is open.
 - **Last commit:** `a542fe9` — email + password auth and workspace bootstrap,
   plus agent persistence (step 2 below) on top of it.
-- **Green:** 503 tests, clean `typecheck`, `lint` and `build`.
+- **Green:** 532 tests, clean `typecheck`, `lint` and `build`.
+- **Steps 1–3 are done.** The database holds **11,597 real Cluj software
+  companies** imported from the trade register.
 - **Step 1 is done.** A real Supabase project exists (Frankfurt), the schema and
   policies are applied, `verify:rls` passes against it, and signup creates a
   workspace. The app is no longer running on fixtures.
@@ -99,9 +101,9 @@ Neither substitutes for the other, and the second still gates a real user.
 | `verify:rls` against Supabase | **Verified** — full pass, isolation holds |
 | Auth signup → workspace → `/app` | **Verified** — org + owner membership created, demo marker gone |
 | ANAF response field names | **From documentation.** `npm run verify:anaf` prints the raw payload for exactly this reason — expect a fix |
-| ONRC CSV column mapping | **Never seen the file.** `npm run import:onrc -- --dry-run` prints the detected header; the mapping is one exported const |
-| ONRC parsing, filters, streaming | **Verified** — 65 unit tests, plus an end-to-end `--dry-run` over a synthetic ro-RO export |
-| ONRC write path | **Not written.** `writeBatch` throws by design until a database exists |
+| ONRC CSV column mapping | **Verified against the real 08.07.2026 export.** Delimiter is `^`; every column mapped |
+| ONRC parsing, filters, streaming | **Verified** — 94 unit tests, plus full runs over the real 690MB file |
+| ONRC import end to end | **Verified** — 4.0M rows read, 11,597 companies written to Supabase |
 | Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
 | Claude ICP inference end to end | **Never run** with a real key |
 | Gmail send | Routes not written yet |
@@ -198,6 +200,15 @@ has rows.
    because that almost always means a column mapped to the wrong field rather
    than a dirty register.
 
+   **Done.** The importer handles the real multi-file export: `OD_FIRME` joined
+   to `OD_STARE_FIRMA` and `OD_CAEN_AUTORIZAT` on the trade-register number,
+   with `N_CAEN` and `N_STARE_FIRMA` decoding the codes. Filter first, then
+   join, so memory stays bounded by the slice rather than the file.
+
+   ```bash
+   npm run import:onrc -- --file od_firme.csv --stare od_stare_firma.csv      --caen-file od_caen_autorizat.csv --nomenclator . --county CJ --caen 62      --active-only
+   ```
+
    Still to write: `scripts/enrich-registry.ts` (batch through
    `AnafClient.lookupByCui`, 100 per request at ~1/s). It is blocked on both the
    database and network egress to ANAF, so `npm run verify:anaf` is the thing to
@@ -266,6 +277,28 @@ unsubscribe endpoint, Copilot.
   below their content, so a `truncate` inside never gets the chance to apply
   and the track resolves wider than its container. `[&>*]:min-w-0` on the
   container is the fix.
+- **ONRC's delimiter is `^`, not `,` or `;`.** Nobody guesses that. It is also
+  why it works: a caret never appears in a company name or address, so nothing
+  needs quoting.
+- **CAEN Rev 3 reassigned codes.** `6210` meant *scheduled air transport* in the
+  1998 and 2003 revisions and means *software development* in the 2025 one;
+  `6201` was software in 2008. So a bare code is meaningless without its
+  version, and `N_CAEN.CSV` is the source of truth, not any hand-written table.
+  Contamination in division 62 is currently negligible — 60 rows nationally
+  against ~460k — but a division-level filter is version-blind by construction.
+- **Half the register is struck off.** `radiată` is the single most common
+  status (49%), so `--active-only` is not a nicety. Suspended companies
+  (`întrerupere temporară`) are excluded too; `sediu expirat` is administrative
+  and a trading company routinely carries it.
+- **`companies.domain` is unique, but the register is not.** Romanian groups run
+  several legal entities off one website. The importer gives the domain to the
+  first claimant and leaves the rest null rather than dropping the constraint,
+  which exists so a crawler and a registry import can recognise the same
+  company.
+- **Only ~1% of registered companies list a website.** 140 of 11,597 in the Cluj
+  slice. Everything domain-based — crawling, tech-stack signals, email pattern
+  inference — therefore reaches a small minority from the registry alone.
+  Finding domains for the rest is an unsolved problem, not a wiring gap.
 - **A PostgREST `select` string must be one literal.** supabase-js reads it at
   the type level, and `"a" + "b"` widens to `string`, which turns every row into
   `GenericStringError` and fails `typecheck` with a message that names neither

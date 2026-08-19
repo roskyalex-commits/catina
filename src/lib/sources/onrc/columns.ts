@@ -24,7 +24,8 @@ export type OnrcField =
   | "address"
   | "status"
   | "registrationDate"
-  | "legalForm";
+  | "legalForm"
+  | "website";
 
 /**
  * Aliases per field, most likely first. Compared after `normaliseHeader`, so
@@ -35,25 +36,32 @@ export const ONRC_COLUMN_ALIASES: Record<OnrcField, string[]> = {
   name: ["denumire", "denumire firma", "nume", "razsociala", "raz sociala"],
   regCom: [
     "cod inmatriculare",
+    "euid",
     "nr reg com",
     "numar de ordine in registrul comertului",
     "registrul comertului",
     "nrregcom",
-    "euid",
   ],
   caen: ["cod caen", "caen", "cod caen principal", "caen principal", "activitate principala cod"],
   caenLabel: ["denumire caen", "caen denumire", "activitate principala", "obiect de activitate"],
-  county: ["judet", "denumire judet", "judetul"],
-  city: ["localitate", "denumire localitate", "oras", "municipiu", "comuna"],
-  address: ["adresa", "sediu", "adresa sediu", "strada"],
+  county: ["adr judet", "judet", "denumire judet", "judetul"],
+  city: ["adr localitate", "localitate", "denumire localitate", "oras", "municipiu", "comuna"],
+  address: ["adr den strada", "adresa", "sediu", "adresa sediu", "strada"],
   status: ["stare firma", "stare", "stare societate", "status"],
   registrationDate: [
-    "data inregistrare",
     "data inmatriculare",
+    "data inregistrare",
     "data infiintare",
     "datainregistrarii",
   ],
   legalForm: ["forma juridica", "forma de organizare", "tip societate"],
+  /**
+   * The register carries the company's own website. Worth taking: a domain is
+   * what makes the crawler, the email-pattern engine and tech-stack detection
+   * possible at all, and it is the one field here that no amount of ANAF
+   * enrichment would ever supply.
+   */
+  website: ["web", "website", "pagina web", "site"],
 };
 
 /** Fields without which a row cannot become a company record. */
