@@ -467,6 +467,20 @@ unsubscribe endpoint, Copilot.
   code on its own site, so `pageMentionsCui` is proof of ownership and is
   reusable for candidates from any source. The next attempt should get its
   candidates from a search API, which already knows the brand↔company link.
+- **The `--measure` gate over-predicts by 3x, and cannot help it.** It scores
+  the candidate source against companies whose domain **the register already
+  carries** — that is the only place a known-good answer exists. But those are
+  exactly the companies that bothered to register a website, and they turn out
+  to be far easier: measured 7.5% CUI-provable on that sample, **2.4% on a live
+  run over 250 companies the register has no website for**. The gate is still
+  worth running — it correctly ruled name-guessing out at 0% — but read its
+  number as a ceiling, not a forecast.
+- **Domain search is not worth its quota at the current yield.** 250 Brave
+  queries produced 6 domains, which at the measured 26% harvest rate is about
+  1.5 email addresses — against a free tier of 2,000 queries a month. Importing
+  the register's own website column produced **5,400 domains for zero queries**.
+  Search is the right tool only for a company somebody specifically cares about,
+  never as a bulk pass.
 - **A company's CUI is usually NOT on its website, whatever the law says.**
   The whole verifier rests on "a Romanian company must publish its fiscal
   code", and that is the legal position, not the observed one. Measured over 60
