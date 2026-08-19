@@ -134,6 +134,56 @@ function isAllowed(path: string, disallows: string[]): boolean {
 }
 
 /**
+ * Technology fingerprints, by product name.
+ *
+ * Hoisted out of `fingerprintTech` so the product names can also be offered as
+ * a vocabulary: a user naming a competitor needs to know which ones we can
+ * actually detect, and "we found HubSpot on their site" is only honest if
+ * HubSpot is in this table.
+ */
+export const TECH_MARKERS: Record<string, RegExp> = {
+  Shopify: /cdn\.shopify\.com|shopify-section/,
+  WooCommerce: /woocommerce/,
+  Magento: /mage-init|magento/,
+  PrestaShop: /prestashop/,
+  WordPress: /wp-content|wp-includes/,
+  Webflow: /webflow\.(js|com)/,
+  Wix: /static\.wixstatic\.com/,
+  Squarespace: /squarespace/,
+  Next: /\/_next\/static/,
+  Nuxt: /__nuxt|\/_nuxt\//,
+  React: /react(-dom)?[.@]/,
+  Vue: /vue(\.runtime)?[.@]/,
+  HubSpot: /js\.hs-scripts\.com|hs-analytics/,
+  Intercom: /widget\.intercom\.io/,
+  Drift: /js\.driftt\.com/,
+  Segment: /cdn\.segment\.com/,
+  Stripe: /js\.stripe\.com/,
+  PayPal: /paypal\.com\/sdk/,
+  "Google Analytics": /googletagmanager\.com|google-analytics\.com/,
+  "Meta Pixel": /connect\.facebook\.net.*fbevents/,
+  Hotjar: /static\.hotjar\.com/,
+  Cloudflare: /cdn-cgi\//,
+  Klaviyo: /static\.klaviyo\.com/,
+  Mailchimp: /chimpstatic\.com|list-manage\.com/,
+  // Romanian market specifics — worth targeting on directly.
+  Gomag: /gomag\.ro/,
+  MerchantPro: /merchantpro|shopmania/,
+  SmartBill: /smartbill\.ro/,
+  Netopia: /netopia-payments|mobilpay/,
+  EuPlatesc: /euplatesc\.ro/,
+  "eMAG Marketplace": /emag\.ro\/marketplace/,
+};
+
+/**
+ * Every technology this build can detect, sorted.
+ *
+ * The competitor picker's vocabulary. Anything outside it can still be named,
+ * but it becomes a text-mention signal, which is weaker and noisier.
+ */
+export const DETECTABLE_TECH: readonly string[] = Object.keys(TECH_MARKERS).sort();
+
+/**
  * Tech detection from markup and headers. Covers the mainstream stacks that
  * matter for ICP targeting and for the "tech stack changed" signal, replacing
  * BuiltWith ($295/mo) and Wappalyzer ($250/mo) for our purposes.
@@ -142,41 +192,7 @@ export function fingerprintTech(html: string, headers: Headers): string[] {
   const found = new Set<string>();
   const h = html.toLowerCase();
 
-  const markers: Record<string, RegExp> = {
-    Shopify: /cdn\.shopify\.com|shopify-section/,
-    WooCommerce: /woocommerce/,
-    Magento: /mage-init|magento/,
-    PrestaShop: /prestashop/,
-    WordPress: /wp-content|wp-includes/,
-    Webflow: /webflow\.(js|com)/,
-    Wix: /static\.wixstatic\.com/,
-    Squarespace: /squarespace/,
-    Next: /\/_next\/static/,
-    Nuxt: /__nuxt|\/_nuxt\//,
-    React: /react(-dom)?[.@]/,
-    Vue: /vue(\.runtime)?[.@]/,
-    HubSpot: /js\.hs-scripts\.com|hs-analytics/,
-    Intercom: /widget\.intercom\.io/,
-    Drift: /js\.driftt\.com/,
-    Segment: /cdn\.segment\.com/,
-    Stripe: /js\.stripe\.com/,
-    PayPal: /paypal\.com\/sdk/,
-    "Google Analytics": /googletagmanager\.com|google-analytics\.com/,
-    "Meta Pixel": /connect\.facebook\.net.*fbevents/,
-    Hotjar: /static\.hotjar\.com/,
-    Cloudflare: /cdn-cgi\//,
-    Klaviyo: /static\.klaviyo\.com/,
-    Mailchimp: /chimpstatic\.com|list-manage\.com/,
-    // Romanian market specifics — worth targeting on directly.
-    Gomag: /gomag\.ro/,
-    MerchantPro: /merchantpro|shopmania/,
-    SmartBill: /smartbill\.ro/,
-    Netopia: /netopia-payments|mobilpay/,
-    EuPlatesc: /euplatesc\.ro/,
-    "eMAG Marketplace": /emag\.ro\/marketplace/,
-  };
-
-  for (const [name, re] of Object.entries(markers)) {
+  for (const [name, re] of Object.entries(TECH_MARKERS)) {
     if (re.test(h)) found.add(name);
   }
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  DETECTABLE_TECH,
   SiteFetchError,
+  TECH_MARKERS,
   extractEmails,
   fingerprintTech,
   normaliseUrl,
@@ -109,5 +111,53 @@ describe("extractEmails", () => {
     expect(extractEmails(mixed, "firma.ro", { roleOnly: true })).toEqual([
       "office@mail.firma.ro",
     ]);
+  });
+});
+
+describe("DETECTABLE_TECH", () => {
+  /**
+   * This list is a promise to the user: it is what the competitor picker offers,
+   * and "we found HubSpot on their site" is only honest if HubSpot is in it. A
+   * marker that no longer matches its own name would break that quietly.
+   */
+  it("is non-empty and sorted", () => {
+    expect(DETECTABLE_TECH.length).toBeGreaterThan(20);
+    expect([...DETECTABLE_TECH]).toEqual([...DETECTABLE_TECH].sort());
+  });
+
+  it("names exactly the markers that exist", () => {
+    expect(DETECTABLE_TECH).toEqual(Object.keys(TECH_MARKERS).sort());
+  });
+
+  it("detects the platforms the competitor picker will offer", () => {
+    // A sample of real markup per tool rather than a regex derived from the
+    // pattern itself: deriving it passes even when the pattern is wrong, which
+    // is the one thing this test exists to catch.
+    const fixtures: Record<string, string> = {
+      Shopify: '<script src="https://cdn.shopify.com/s/files/x.js">',
+      HubSpot: '<script src="//js.hs-scripts.com/123.js">',
+      Intercom: '<script src="https://widget.intercom.io/widget/abc">',
+      Webflow: '<script src="/js/webflow.js">',
+      Stripe: '<script src="https://js.stripe.com/v3/">',
+      Gomag: '<link href="https://cdn.gomag.ro/style.css">',
+      SmartBill: '<a href="https://smartbill.ro/factura">factura</a>',
+      Netopia: '<img src="https://netopia-payments.com/logo.png">',
+      EuPlatesc: '<form action="https://secure.euplatesc.ro/tdsprocess">',
+      MerchantPro: '<script src="https://merchantpro.ro/app.js">',
+    };
+
+    for (const [tool, html] of Object.entries(fixtures)) {
+      expect(DETECTABLE_TECH, `${tool} is not in the vocabulary`).toContain(tool);
+      expect(
+        fingerprintTech(html, new Headers()),
+        `${tool} was not detected in its own markup`,
+      ).toContain(tool);
+    }
+  });
+
+  it("still carries the Romanian platforms, which are the targeting edge", () => {
+    for (const tool of ["Gomag", "MerchantPro", "SmartBill", "Netopia", "EuPlatesc"]) {
+      expect(DETECTABLE_TECH).toContain(tool);
+    }
   });
 });

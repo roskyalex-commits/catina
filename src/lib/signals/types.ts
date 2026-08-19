@@ -1,3 +1,4 @@
+import type { SiteSnapshot } from "@/lib/crawl/fetch-site";
 import type { SourcedCompany } from "@/lib/sources/types";
 
 /**
@@ -44,6 +45,15 @@ export type Signal = {
   personLinkedinUrl?: string;
 };
 
+/** A person at the company, for sources that work at person level. */
+export type ScanPerson = {
+  id: string;
+  fullName: string;
+  title?: string;
+  /** Null for everyone today — ONRC does not publish it. See person-engagement.ts. */
+  linkedinUrl?: string;
+};
+
 export type SignalScanContext = {
   company: SourcedCompany;
   /** Previous scan's state, for sources that work by diffing. */
@@ -56,6 +66,23 @@ export type SignalScanContext = {
   };
   /** Titles the ICP is after, so hiring sources can spot a buyer-shaped role. */
   targetTitles?: string[];
+  /** ICP keywords, matched against the prospect's own site and the news. */
+  keywords?: string[];
+  /** Competitor products we can fingerprint. Vocabulary: `DETECTABLE_TECH`. */
+  competitorTech?: string[];
+  /** Competitor brand names, matched as text where no marker exists. */
+  competitorNames?: string[];
+  /** People known at this company. Empty today; the LinkedIn seam reads it. */
+  people?: ScanPerson[];
+  /**
+   * The site, fetched at most once per scan however many sources want it.
+   *
+   * Without this every source that needs the page fetches it independently —
+   * the tech-stack and pricing sources alone did twelve HTTP requests per
+   * company for two signals. Returns null when the site is unreachable, which
+   * is an ordinary outcome rather than an error.
+   */
+  site?: () => Promise<SiteSnapshot | null>;
 };
 
 export interface SignalSource {

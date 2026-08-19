@@ -1,5 +1,32 @@
 import type { Signal, SignalScanContext, SignalSource } from "../types";
-import { fetchSiteSnapshot, SiteFetchError } from "@/lib/crawl/fetch-site";
+import {
+  fetchSiteSnapshot,
+  SiteFetchError,
+  type SiteSnapshot,
+} from "@/lib/crawl/fetch-site";
+
+/**
+ * The company's site, from the scan's shared reader when there is one.
+ *
+ * Both sources in this file need the same page. Fetching it twice cost twelve
+ * HTTP requests per company for two signals, so `context.site` memoises one read
+ * across every source in a scan. The direct fetch stays as the fallback for
+ * callers that build a context by hand — the tests do, and so would anyone
+ * running a single source.
+ */
+async function siteFor(context: SignalScanContext): Promise<SiteSnapshot | null> {
+  if (context.site) return context.site();
+  const domain = context.company.domain;
+  if (!domain) return null;
+  try {
+    return await fetchSiteSnapshot(domain);
+  } catch (error) {
+    // An unreachable site is not a change. Emitting one would fire a signal
+    // every time a site had an outage.
+    if (error instanceof SiteFetchError) return null;
+    throw error;
+  }
+}
 
 /**
  * Signals from diffing a company's own website between scans.
@@ -36,15 +63,9 @@ export class TechStackSignalSource implements SignalSource {
     const previous = context.previous?.techStack;
     if (!domain || !previous) return [];
 
-    let current: string[];
-    try {
-      current = (await fetchSiteSnapshot(domain)).techStack;
-    } catch (error) {
-      // An unreachable site is not a stack change. Emitting one here would
-      // fire a signal every time a site had an outage.
-      if (error instanceof SiteFetchError) return [];
-      throw error;
-    }
+    const snapshot = await siteFor(context);
+    if (!snapshot) return [];
+    const current = snapshot.techStack;
 
     const added = current.filter((t) => !previous.includes(t));
     const removed = previous.filter((t) => !current.includes(t));
@@ -107,13 +128,8 @@ export class PricingPageSignalSource implements SignalSource {
     const previousHash = context.previous?.pricingPageHash;
     if (!domain || !previousHash) return [];
 
-    let snapshot;
-    try {
-      snapshot = await fetchSiteSnapshot(domain);
-    } catch (error) {
-      if (error instanceof SiteFetchError) return [];
-      throw error;
-    }
+    const snapshot = await siteFor(context);
+    if (!snapshot) return [];
 
     const pricingPage = snapshot.pages.find((p) => /pricing|preturi|tarife/i.test(p.url));
     if (!pricingPage) return [];
@@ -130,7 +146,9 @@ export class PricingPageSignalSource implements SignalSource {
         strength: 0.5,
         detectedAt,
         dedupeKey: `pricing:${domain}:${currentHash.slice(0, 12)}`,
-        payload: { previousHash, currentHash },
+        // The URL travels with the hash so the next scan can persist both and
+        // diff the same page rather than whichever one matched first.
+        payload: { previousHash, currentHash, pricingPageUrl: pricingPage.url },
       },
     ];
   }
