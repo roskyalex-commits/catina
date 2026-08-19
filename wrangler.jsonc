@@ -1,0 +1,95 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "catina",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-03-25",
+  // nodejs_compat is required by @opennextjs/cloudflare and by the pg/crypto
+  // shims the enrichment adapters rely on.
+  "compatibility_flags": ["nodejs_compat"],
+
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  "observability": { "enabled": true },
+
+  // ---------------------------------------------------------------- queues
+  // The agent pipeline. Each stage is its own queue so a slow enrichment run
+  // can't starve signal scanning, and so retries are scoped per stage.
+  // Workers' CPU limit is why these are chunked rather than one long job.
+  "queues": {
+    "producers": [
+      { "queue": "catina-discover", "binding": "QUEUE_DISCOVER" },
+      { "queue": "catina-enrich", "binding": "QUEUE_ENRICH" },
+      { "queue": "catina-signals", "binding": "QUEUE_SIGNALS" },
+      { "queue": "catina-draft", "binding": "QUEUE_DRAFT" },
+      { "queue": "catina-send", "binding": "QUEUE_SEND" }
+    ],
+    "consumers": [
+      {
+        "queue": "catina-discover",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 3,
+        "dead_letter_queue": "catina-dlq"
+      },
+      {
+        "queue": "catina-enrich",
+        "max_batch_size": 5,
+        "max_batch_timeout": 30,
+        "max_retries": 3,
+        "dead_letter_queue": "catina-dlq"
+      },
+      {
+        "queue": "catina-signals",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 2,
+        "dead_letter_queue": "catina-dlq"
+      },
+      {
+        "queue": "catina-draft",
+        "max_batch_size": 3,
+        "max_batch_timeout": 30,
+        "max_retries": 2,
+        "dead_letter_queue": "catina-dlq"
+      },
+      {
+        // Sending is deliberately serial: one message at a time keeps us inside
+        // Gmail's per-account limits and makes the daily counter honest.
+        "queue": "catina-send",
+        "max_batch_size": 1,
+        "max_batch_timeout": 10,
+        "max_retries": 2,
+        "dead_letter_queue": "catina-dlq"
+      }
+    ]
+  },
+
+  // ------------------------------------------------------------------ cron
+  "triggers": {
+    "crons": [
+      // Signal re-scan for active ICPs, hourly.
+      "0 * * * *",
+      // Nightly: ANAF financial refresh, ONRC new-registration delta,
+      // daily send-counter reset.
+      "30 2 * * *"
+    ]
+  },
+
+  // ------------------------------------------------------------------- kv
+  // Response cache for registry lookups. ANAF/CUIScan are free but rate-limited
+  // (300 req/min), so caching is what keeps the free tier viable.
+  "kv_namespaces": [
+    { "binding": "CACHE", "id": "PLACEHOLDER_CREATE_WITH_WRANGLER_KV_CREATE" }
+  ],
+
+  "vars": {
+    "NEXT_PUBLIC_APP_URL": "http://localhost:3000"
+  }
+
+  // Secrets are set with `wrangler secret put`, never committed:
+  //   SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY, ENCRYPTION_KEY,
+  //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and any provider keys.
+}

@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/*
+ * Palette matched to the reference product: coral on cool grey, white surfaces.
+ *
+ * Light-only, deliberately. The reference has no dark mode, and pixel fidelity
+ * is the acceptance criterion for this pass — a dark palette nobody is checking
+ * against a reference drifts silently. Reinstating it means adding a
+ * `prefers-color-scheme` block that redefines these same tokens, nothing more.
+ */
+:root {
+  --background: #f7f7f8;
+  --surface: #ffffff;
+  --surface-muted: #fafafa;
+  --foreground: #191919;
+  --muted: #71717a;
+  --muted-strong: #52525b;
+  --border: #ebebee;
+  --border-strong: #d4d4d8;
+
+  --accent: #ef5b3c;
+  --accent-hover: #e04a2b;
+  --accent-foreground: #ffffff;
+  --accent-soft: #fdeee9;
+  --accent-ring: #f8c4b6;
+
+  --success: #16a34a;
+  --success-soft: #dcfce7;
+  --warning: #f59e0b;
+  --warning-soft: #fef3c7;
+  --danger: #dc2626;
+  --danger-soft: #fee2e2;
+  --info: #3b82f6;
+  --info-soft: #dbeafe;
+
+  /* Chart series. Fixed hues so a legend dot and its line can never disagree. */
+  --series-leads: #10b981;
+  --series-invites: #8b5cf6;
+  --series-messages: #ec4899;
+  --series-emails: #3b82f6;
+
+  --radius-card: 14px;
+  --radius-control: 9px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ring: var(--accent-ring);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  --color-series-leads: var(--series-leads);
+  --color-series-invites: var(--series-invites);
+  --color-series-messages: var(--series-messages);
+  --color-series-emails: var(--series-emails);
+
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Sidebar and table scrollers sit next to each other on the Contacts screen; a
+ * default macOS-width scrollbar there breaks the column alignment the reference
+ * relies on.
+ */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: 999px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}

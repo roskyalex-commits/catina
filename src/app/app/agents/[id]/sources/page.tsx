@@ -1,0 +1,130 @@
+import { notFound } from "next/navigation";
+import { Globe, Radar, Target } from "lucide-react";
+import { Card, Pill, SectionTitle } from "@/components/ui/primitives";
+import { getAgent } from "@/lib/data/agents";
+import { SIGNAL_SOURCE_CATALOGUE } from "@/lib/signals/scanner";
+
+/**
+ * What the agent looks for and where it looks.
+ *
+ * The signal catalogue is split Romanian / universal because that split is the
+ * product's whole argument: ANAF and ONRC are official, free and structurally
+ * unavailable to international tools, and no amount of scraping substitutes for
+ * a filed balance sheet.
+ */
+export default async function AgentSourcesPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const agent = await getAgent(id);
+  if (!agent) notFound();
+
+  const enabled = new Set(agent.sources.enabledSignals);
+  const romanian = SIGNAL_SOURCE_CATALOGUE.filter((s) => s.romaniaOnly);
+  const universal = SIGNAL_SOURCE_CATALOGUE.filter((s) => !s.romaniaOnly);
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <Card className="h-fit p-5">
+        <SectionTitle
+          title="Targeting"
+          description="Who this agent goes looking for."
+        />
+        <dl className="mt-4 space-y-4">
+          <ChipRow icon={Globe} label="Countries" values={agent.sources.countries} />
+          <ChipRow icon={Target} label="Job titles" values={agent.sources.targetTitles} />
+          <ChipRow icon={Radar} label="Keywords" values={agent.sources.keywords} />
+          <ChipRow
+            icon={Target}
+            label="CAEN codes"
+            values={agent.sources.caenCodes}
+            mono
+          />
+        </dl>
+      </Card>
+
+      <div className="space-y-5">
+        <Card className="p-5">
+          <SectionTitle
+            title="Romanian registry"
+            description="Official, free, and unavailable to international tools."
+          />
+          <SourceList sources={romanian} enabled={enabled} />
+        </Card>
+
+        <Card className="p-5">
+          <SectionTitle
+            title="Universal sources"
+            description="Work in any market the agent targets."
+          />
+          <SourceList sources={universal} enabled={enabled} />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function ChipRow({
+  icon: Icon,
+  label,
+  values,
+  mono,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  values: string[];
+  mono?: boolean;
+}) {
+  return (
+    <div>
+      <dt className="flex items-center gap-1.5 text-[13px] text-muted">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </dt>
+      <dd className="mt-1.5 flex flex-wrap gap-1.5">
+        {values.length === 0 ? (
+          <span className="text-[13px] text-muted">Not set</span>
+        ) : (
+          values.map((value) => (
+            <span
+              key={value}
+              className={`rounded-full bg-background px-2.5 py-1 text-[12px] ${mono ? "font-mono" : ""}`}
+            >
+              {value}
+            </span>
+          ))
+        )}
+      </dd>
+    </div>
+  );
+}
+
+function SourceList({
+  sources,
+  enabled,
+}: {
+  sources: typeof SIGNAL_SOURCE_CATALOGUE;
+  enabled: Set<string>;
+}) {
+  return (
+    <ul className="mt-4 divide-y divide-border">
+      {sources.map((source) => (
+        <li key={source.key} className="py-3">
+          <p className="flex flex-wrap items-center gap-2 text-[13px] font-medium">
+            {source.label}
+            {enabled.has(source.key) ? (
+              <Pill tone="success" dot>
+                On
+              </Pill>
+            ) : (
+              <Pill tone="neutral">Off</Pill>
+            )}
+          </p>
+          <p className="mt-0.5 text-[13px] text-muted">{source.description}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}

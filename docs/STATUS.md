@@ -1,0 +1,251 @@
+# Where this project is
+
+Written for whoever (human or agent) picks this up next, so nothing has to be
+re-explained or re-derived. Update it when the answers change.
+
+- **Branch:** `claude/gojiberry-competitor-saas-mglle8` — all work lives here.
+  `main` does not have it, and no pull request is open.
+- **Last commit:** `a542fe9` — email + password auth and workspace bootstrap,
+  plus agent persistence (step 2 below) on top of it.
+- **Green:** 503 tests, clean `typecheck`, `lint` and `build`.
+
+> If you are reading this in an unzipped export rather than a clone, there is no
+> git history in the folder and `npm install` has to run before anything else.
+
+## What this is
+
+Cătină: an AI sales agent that finds B2B leads who are in the market *now*.
+Paste a website, it infers who buys from you, finds those companies in the
+Romanian trade register, enriches contacts, watches for buying signals, drafts
+outreach. Romania-first, built to run on free tiers. See `README.md` for the
+pitch and the stack table.
+
+## The one thing to understand first
+
+**Everything third-party was written from documentation, never from an observed
+response.** The environment this was built in had no outbound network beyond
+npm, GitHub, Google Fonts and the Anthropic API. ANAF, ONRC, Supabase, Hunter
+and Google were all unreachable — the gateway denied CONNECT at the proxy.
+
+So the code is careful in a specific way: it parses defensively, it never
+assumes a field exists, and anything untestable ships with a script that prints
+the raw payload. Treat the verified/unverified ledger below as the real status,
+not the test count.
+
+## Setup from zero
+
+```bash
+npm install
+npm run dev            # works immediately — no configuration needed
+```
+
+With no `.env.local` the app runs on a **demo dataset**: every screen renders,
+and every score in it is computed by the real scoring engine rather than
+written down. A "Demo data" marker sits in the sidebar and disappears on its
+own once `NEXT_PUBLIC_SUPABASE_URL` is set. This is why `src/proxy.ts` returns
+early when Supabase env is absent — without that, constructing the client threw
+and every route 500'd.
+
+To go beyond demo mode:
+
+1. Supabase project at [database.new](https://database.new), **region Frankfurt
+   (eu-central-1)**. Romanian personal data should stay in the EU; this is a
+   design constraint, not a preference.
+2. Fill `.env.local` from `.env.example`. Only five values matter to start:
+   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+   `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` (the **session pooler** URI,
+   port 5432 — not the direct connection), `ANTHROPIC_API_KEY`. Plus
+   `ENCRYPTION_KEY` from `openssl rand -base64 32`.
+3. Supabase dashboard → Authentication → Sign In / Providers → Email → turn
+   **Confirm email off**. The built-in mailer is capped at a few messages an
+   hour and will block testing. The confirmation flow is built and works; it is
+   just unusable for local development.
+4. Supabase dashboard → Authentication → URL Configuration → Site URL
+   `http://localhost:3000`.
+
+```bash
+npm run db:setup       # drizzle push, then apply RLS policies
+npm run verify:rls     # MUST fully pass before any real user exists
+npm run db:types       # replaces the placeholder Database type (see below)
+```
+
+`verify:rls` creates two workspaces and asserts one cannot read the other. It
+is not optional — an un-policied tenant table is a cross-org data leak.
+
+It is no longer the only check, though. `src/lib/db/policies.test.ts` applies
+the same schema and the same `policies.sql` to an in-process Postgres (PGlite,
+WASM — no daemon, no network, no Supabase) and asserts the isolation directly.
+That runs in `npm test`. The two are complementary: the test proves **the SQL is
+correct**, `verify:rls` proves **this Supabase project is configured correctly**.
+Neither substitutes for the other, and the second still gates a real user.
+
+## Verified vs unverified
+
+| Area | State |
+|---|---|
+| All 18 `/app` routes render | **Verified** — 200 in dev, screenshotted at 1440px |
+| No page scrolls horizontally | **Verified** — all 19 routes measured at 1440 / 768 / 375px, zero overflow |
+| Scoring, compliance, MIME, CSV, patterns, seniority | **Verified** — 391 unit tests |
+| Chart geometry | **Verified** — monotone-cubic overshoot is explicitly tested |
+| Demo mode with no env | **Verified** |
+| Agent create/list mapping + validation | **Verified** — 27 unit tests on the pure layer |
+| `POST`/`GET /api/v1/agents` against a real table | **Never run.** Guards return 401/503 correctly with no session; the insert itself has never executed |
+| Schema DDL + `policies.sql` apply | **Verified** — against real Postgres (PGlite/WASM) in `src/lib/db/policies.test.ts` |
+| Tenant isolation (the actual boundary) | **Verified** — two orgs, cross-org read/insert/update/delete all denied, secrets deny-all, offline, ~1.5s |
+| `db:setup` against Supabase | **Never run.** The SQL is proven; the Supabase project is not |
+| Auth signup → workspace → `/app` | **Never run** against a live Supabase |
+| ANAF response field names | **From documentation.** `npm run verify:anaf` prints the raw payload for exactly this reason — expect a fix |
+| ONRC CSV column mapping | **Never seen the file.** `npm run import:onrc -- --dry-run` prints the detected header; the mapping is one exported const |
+| ONRC parsing, filters, streaming | **Verified** — 65 unit tests, plus an end-to-end `--dry-run` over a synthetic ro-RO export |
+| ONRC write path | **Not written.** `writeBatch` throws by design until a database exists |
+| Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
+| Claude ICP inference end to end | **Never run** with a real key |
+| Gmail send | Routes not written yet |
+
+## Decisions that should not be relitigated
+
+Each of these was made deliberately and has a cost attached to reversing it.
+
+- **Cloudflare Workers, not Vercel.** Vercel's Hobby tier forbids commercial
+  use; Cloudflare's free tier permits it. Consequences: no `node:crypto` (use
+  WebCrypto), no `Buffer`, and outbound port 25 is blocked — which is why
+  per-mailbox SMTP verification sits behind an unimplemented interface.
+- **Drizzle for schema only.** Runtime access goes through PostgREST with the
+  caller's JWT so RLS applies. A service-role connection at runtime would
+  bypass the entire tenancy boundary.
+- **`drizzle/policies.sql` is the tenancy boundary**, not application code.
+  `orgs` deliberately has no insert policy for `authenticated` — org creation
+  decides tenancy, so it belongs to the service role.
+- **Org bootstrap is a route, not a `handle_new_user` trigger.** A trigger that
+  throws fails signup inside GoTrue with no surfaced error; a route returns a
+  status code you can read in the network tab.
+- **No LinkedIn.** Engagement data needs a paid API or a terms-violating
+  scraper. Where the reference product plots "invitations sent", this plots
+  companies sourced and signals detected — things it can measure.
+- **No reply tracking.** Reading a Gmail mailbox needs `gmail.readonly`, which
+  Google classifies as **restricted**: an annual CASA Tier 2 assessment,
+  roughly $540–1,000/yr. Sending needs only `gmail.send` and `gmail.compose`,
+  which are *sensitive* — about ten days of verification, no fee. So reply rate
+  stays at zero rather than being estimated, and deliverability is reported
+  instead because it is actually measured.
+- **No Apollo.** Its free and Basic plans include no API access at all; the API
+  starts around $745/mo. This was checked, not assumed.
+- **Pages never touch the database.** They read `src/lib/data/*`, which returns
+  typed view models — fixtures today, queries as persistence lands. Keeping
+  that seam is why the UI will not be rebuilt underneath.
+- **Romania warns, it does not block.** Law 506/2004 requires express prior
+  consent for commercial email with no B2B exemption, and ANSPDCP fines run
+  RON 5,000–100,000 or up to 2% of turnover. The app warns and records an
+  acknowledgement; only the do-not-contact list blocks outright. The send
+  decision stays with the user — that was their explicit call.
+
+## Next steps, in order
+
+Each unlocks the next. Do not skip ahead — step 4 produces nothing until step 3
+has rows.
+
+1. **Verify auth** (user action). `db:setup` → `verify:rls` → sign up at
+   `/signup` → land on `/app` with the demo marker **gone** and every count at
+   zero. That transition is the signal that you are reading a real database.
+2. **Agent persistence — written, not yet verified.** `POST`/`GET
+   /api/v1/agents` exist, on the **request-scoped** client only. The wizard's
+   "Create agent" button posts the corrected ICP and routes to the new agent;
+   `src/lib/data/agents.ts` reads the table outside demo mode. The mapping
+   either side of PostgREST is pure and tested (`src/lib/agents/mapper.ts`).
+
+   What is left is a single pass against a real database, once step 1 is done:
+   sign up, create an agent from `/onboarding`, and confirm it comes back from
+   `GET /api/v1/agents` and appears on `/app/agents`. Expect the plan cap to
+   bite immediately — free is **one** agent, so the second create returns 402
+   by design. Two things to watch on that first run: that `created_at` and the
+   array columns narrow cleanly (the row helpers throw with a `db:types` hint
+   if not), and that a second workspace cannot see the first one's agents.
+3. **Seed the company table.** `AnafAdapter` searches the local `companies`
+   table because ANAF has no search-by-CAEN endpoint — you can only look a
+   company up once you know its CUI. Decision already taken: **narrow slice
+   first** (one county or a handful of CAEN codes, a few thousand rows) to prove
+   the chain, then scale with different flags.
+
+   `scripts/import-onrc.ts` is written and runs today. Everything except the
+   write is done: it streams the CSV, sniffs the delimiter, discovers the
+   columns, parses, filters on `--caen` / `--county` / `--active-only`, and
+   supports `--max-rows` / `--resume`. `writeBatch` throws on purpose — it is
+   the one part that cannot be written honestly without a table to write to.
+
+   **Download the CSV from data.gov.ro and run this first:**
+
+   ```bash
+   npm run import:onrc -- --file <path.csv> --dry-run
+   ```
+
+   It needs no database and no `.env.local`. It prints which column it matched
+   to which field; if a column is named something the aliases do not cover, add
+   the string to `ONRC_COLUMN_ALIASES` in `src/lib/sources/onrc/columns.ts` and
+   nothing else changes. A rejection rate over 20% is reported explicitly,
+   because that almost always means a column mapped to the wrong field rather
+   than a dirty register.
+
+   Still to write: `scripts/enrich-registry.ts` (batch through
+   `AnafClient.lookupByCui`, 100 per request at ~1/s). It is blocked on both the
+   database and network egress to ANAF, so `npm run verify:anaf` is the thing to
+   run before trusting it.
+4. **First sourcing run.** `src/lib/pipeline/source-run.ts` plus
+   `POST /api/v1/sourcing/run`, bounded to ~25 companies per invocation and
+   **synchronous, not queued** — wiring five queue consumers before a single
+   lead exists means debugging the queue and the pipeline simultaneously.
+5. **Email waterfall** against real leads. `EmailWaterfall.resolve()` exists and
+   is tested; it needs callers and at least one provider key, or it degrades to
+   MX + role addresses + pattern inference.
+6. **Gmail OAuth.** `/api/v1/auth/google/{start,callback}`, storing the refresh
+   token encrypted via the existing `src/lib/outreach/crypto.ts`. Needs a Google
+   Cloud project first.
+
+Out of scope until the above works: queue consumers, cron handlers, the
+unsubscribe endpoint, Copilot.
+
+## Landmines
+
+- **RLS is testable offline now.** It used to be true that unit tests could not
+  exercise the tenancy boundary. PGlite removed that constraint, so a policy
+  change should come with a case in `src/lib/db/policies.test.ts`. Note the two
+  shims it needs — Supabase supplies an `auth` schema with `auth.uid()`, and
+  grants table privileges to `authenticated` before RLS narrows them. Without
+  the grants every isolation assertion passes for the wrong reason, because the
+  role cannot see the tables at all.
+- **`src/lib/supabase/types.ts` is a placeholder.** Every selected column
+  arrives as `unknown`, which is why `src/lib/supabase/row.ts` exists to narrow
+  at runtime rather than cast. Run `npm run db:types` once a project exists and
+  the placeholder is replaced wholesale; the row helpers stay correct, just
+  redundant.
+- **Supabase free tier is 500MB.** The full Romanian register is roughly 4M rows
+  and would exceed it. Hence the narrow-slice decision in step 3, and
+  `npm run db:size` should be added to check the estimate against reality.
+- **ANAF enrichment is rate-limited** to one request per 1.1s, 100 CUIs per
+  request. Four million companies is ~12 hours unattended. `AnafClient`
+  serialises through a promise queue that survives a rejected call.
+- **`fetchRevenueGrowth` returns null for an unfiled year.** A missing filing is
+  not zero revenue, and treating it as zero would invent a collapse.
+- **Diff-based signals need two scans.** Tech-stack changes, pricing changes and
+  hiring surges produce nothing on a first run, by design.
+- **`sr-only` is `position: absolute`, and that leaks into layout.** Two bugs
+  came from it. On a `<table>` the class does nothing useful — a table treats
+  `width: 1px` as a minimum and expands to its content, so the accessible chart
+  table stretched the document and every page carrying a chart scrolled
+  sideways; it needs a `sr-only` **div** wrapper, which does honour the 1px.
+  And with no positioned ancestor an `sr-only` span resolves against the
+  document rather than its cell, so the one in the contacts table escaped a
+  working `overflow-x-auto` container. Measure with
+  `document.documentElement.scrollWidth > clientWidth`, not by eye.
+- **Grid and flex items default to `min-width: auto`.** They refuse to shrink
+  below their content, so a `truncate` inside never gets the chance to apply
+  and the track resolves wider than its container. `[&>*]:min-w-0` on the
+  container is the fix.
+- **A PostgREST `select` string must be one literal.** supabase-js reads it at
+  the type level, and `"a" + "b"` widens to `string`, which turns every row into
+  `GenericStringError` and fails `typecheck` with a message that names neither
+  the cause nor the file's real problem. Keep the column list on one line.
+- **`LayoutProps<"/">` in `src/app/layout.tsx` comes from `.next/types`.** A
+  fresh checkout fails `typecheck` until `next build` or `next dev` has run
+  once. Nothing is wrong with the file.
+- **`AGENTS.md` is regenerated by `next dev`.** Deleting the block from a diff
+  only recreates it as an uncommitted change; commit it with the work instead.
