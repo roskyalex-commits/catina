@@ -30,16 +30,21 @@ type Options = {
   create?: string;
   agentId?: string;
   pages: number;
+  /** Only source companies we have a website for. */
+  contactable: boolean;
   caen: string[];
 };
 
 function parseArgs(argv: string[]): Options {
-  const options: Options = { list: false, pages: 1, caen: ["6201", "6202", "6203", "6209", "6210"] };
+  const options: Options = { list: false, pages: 1, contactable: false, caen: ["6201", "6202", "6203", "6209", "6210"] };
   for (let i = 0; i < argv.length; i += 1) {
     const next = () => argv[(i += 1)];
     switch (argv[i]) {
       case "--list":
         options.list = true;
+        break;
+      case "--contactable":
+        options.contactable = true;
         break;
       case "--create":
         options.create = next();
@@ -160,6 +165,9 @@ async function main() {
         .order("id", { ascending: true })
         .limit(limit);
       if (cursor) query = query.gt("id", cursor);
+      // See the note on `contactableOnly` in the sourcing route: a company with
+      // no website cannot be emailed by any free route, so it cannot clear 45.
+      if (options.contactable) query = query.not("domain", "is", null);
       if (currentIcp.caenCodes.length) query = query.in("caen", currentIcp.caenCodes);
 
       const { data, error } = await query;

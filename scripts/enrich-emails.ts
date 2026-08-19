@@ -37,8 +37,17 @@ import {
 import { requireEnv } from "./load-env";
 
 const PAGE = 1000;
-/** Polite: this crawls other people's websites, one at a time on purpose. */
+/** Between requests to the *same* host, when a lead is resolved on its own. */
 const PAUSE_MS = 400;
+/**
+ * Companies crawled at once during the bulk harvest.
+ *
+ * Politeness is a per-host property, and these are all different hosts — each
+ * one is visited at most twice, whether we walk them one at a time or eight at
+ * a time. Sequentially, 5,400 companies is several hours; this makes it
+ * minutes, and no individual site notices the difference.
+ */
+const HARVEST_CONCURRENCY = 8;
 
 type Options = {
   limit?: number;
@@ -206,16 +215,26 @@ async function harvestCompanies(options: Options) {
   }
 
   let found = 0;
-  for (const [index, company] of todo.entries()) {
-    const addresses = await fetchRoleEmails(company.domain).catch(() => []);
-    for (const address of addresses) {
-      const saved = await saveCompanyRoleEmail(db, company.id, address);
-      if (saved.error) console.error(`\n  ${company.domain}: ${saved.error}`);
-      else found += 1;
-    }
-    process.stdout.write(`\r  crawled ${index + 1}/${todo.length}, ${found} addresses`);
-    await sleep(PAUSE_MS);
-  }
+  let done = 0;
+  let next = 0;
+
+  await Promise.all(
+    Array.from({ length: Math.min(HARVEST_CONCURRENCY, todo.length) }, async () => {
+      while (next < todo.length) {
+        const company = todo[next++];
+        const addresses = await fetchRoleEmails(company.domain).catch(() => []);
+        for (const address of addresses) {
+          const saved = await saveCompanyRoleEmail(db, company.id, address);
+          if (saved.error) console.error(`\n  ${company.domain}: ${saved.error}`);
+          else found += 1;
+        }
+        done += 1;
+        if (done % 25 === 0 || done === todo.length) {
+          process.stdout.write(`\r  crawled ${done}/${todo.length}, ${found} addresses`);
+        }
+      }
+    }),
+  );
 
   console.log(
     `\n\nWrote ${found} role addresses from ${todo.length} sites ` +

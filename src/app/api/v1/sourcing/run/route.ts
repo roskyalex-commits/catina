@@ -40,6 +40,19 @@ const bodySchema = z.object({
   agentId: z.uuid(),
   limit: z.number().int().min(1).max(MAX_LIMIT).optional(),
   cursor: z.string().max(100).optional(),
+  /**
+   * Only consider companies we have a website for.
+   *
+   * Contactability is 20% of a lead's score and is zero without an email, and
+   * the free route to an email is crawling the company's own site — so a
+   * company with no domain cannot clear 45 no matter how well it fits. Sourcing
+   * those first turns the same quota of leads into reachable ones.
+   *
+   * A separate flag rather than a change of ordering, because the cursor is
+   * `id`-based: re-ordering the query would break the pagination contract,
+   * while filtering keeps it exactly stable within the narrowed set.
+   */
+  contactableOnly: z.boolean().optional(),
 });
 
 /** The columns the pipeline reads. Explicit so a schema change fails loudly. */
@@ -178,6 +191,7 @@ export async function POST(request: Request) {
           .limit(limit);
 
         if (cursor) query = query.gt("id", cursor);
+        if (input.contactableOnly) query = query.not("domain", "is", null);
         if (currentIcp.caenCodes.length > 0) {
           query = query.in("caen", currentIcp.caenCodes);
         } else {
