@@ -19,6 +19,7 @@
     "import:onrc": "tsx scripts/import-onrc.ts",
     "verify:anaf": "tsx scripts/verify-anaf.ts",
     "verify:rls": "tsx scripts/verify-rls.ts",
+    "verify:agents": "tsx scripts/verify-agents.ts",
     "spike:people": "tsx scripts/spike-people-coverage.ts",
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare preview",

@@ -92,7 +92,7 @@ Neither substitutes for the other, and the second still gates a real user.
 | Chart geometry | **Verified** — monotone-cubic overshoot is explicitly tested |
 | Demo mode with no env | **Verified** |
 | Agent create/list mapping + validation | **Verified** — 27 unit tests on the pure layer |
-| `POST`/`GET /api/v1/agents` against a real table | **Never run.** Guards return 401/503 correctly with no session; the insert itself has never executed |
+| `POST`/`GET /api/v1/agents` against a real table | **Verified** — `npm run verify:agents`, 20 checks against the live database |
 | Schema DDL + `policies.sql` apply | **Verified** — against real Postgres (PGlite/WASM) in `src/lib/db/policies.test.ts` |
 | Tenant isolation (the actual boundary) | **Verified** — two orgs, cross-org read/insert/update/delete all denied, secrets deny-all, offline, ~1.5s |
 | `db:setup` against Supabase | **Verified** — applied to a live Frankfurt project |
@@ -153,7 +153,14 @@ has rows.
    `drizzle.config.ts`) and cannot run without a TTY, so use `npm run db:migrate`
    — it applies the generated migration deterministically and records it in
    `__drizzle_migrations`.
-2. **Agent persistence — written, not yet verified.** `POST`/`GET
+2. ~~**Agent persistence.**~~ **Done and verified.** `npm run verify:agents`
+   drives the real route with a real signed-in user: RLS applies, `org_id` in
+   the body is ignored, arrays/numerics/jsonb round-trip, a null revenue bound
+   stays null, and the free plan's one-agent cap returns 402. What remains is
+   only the wizard's own path, which needs `ANTHROPIC_API_KEY` to infer an ICP
+   before there is anything to save.
+
+   *Original note:* `POST`/`GET
    /api/v1/agents` exist, on the **request-scoped** client only. The wizard's
    "Create agent" button posts the corrected ICP and routes to the new agent;
    `src/lib/data/agents.ts` reads the table outside demo mode. The mapping
