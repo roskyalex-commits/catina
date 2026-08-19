@@ -4,53 +4,57 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `f2a4b61` — the email waterfall is connected, leads carry
-  addresses, and domain-from-search is built and waiting on a key.
-- **Green:** 671 tests, clean `typecheck` and `lint`.
-- **Steps 1–4 are done and visible.** Sourcing produces scored leads from the
-  real registry, and `/app` renders them — 758 leads for one agent over the
-  Cluj slice. The database holds **11,597 Cluj companies**, **11,438**
-  ANAF-enriched, and **11,217 named decision-makers** (82% of companies have
-  someone to write to).
-- **Step 5a is done and proved on live data.** The waterfall is connected, 37
-  role addresses are harvested, and the first enriched leads moved **45 → 54**.
-- **Step 5b is now the whole product.** Everything is bounded by one number:
-  only **1% of companies have a domain**, and without one there is no free way
-  to reach anybody. Read the next section.
+- **Last commit:** `cf48f68` — leads carry real email addresses.
+- **Green:** 675 tests, clean `typecheck` and `lint`.
+- **Steps 1–5a are done and visible.** The database holds **17,156 companies**
+  (5,406 with a website), **29,551 decision-makers** and **1,559 harvested
+  email addresses**. `/app` renders **911 leads**, of which **35 carry a real
+  address** and score 54 rather than the old flat 45.
+- **The domain bottleneck was solved by reading the file properly, not by an
+  API.** See the next section — it is the most useful thing in this document.
 
-## The 45-point ceiling, and what lifting it costs
+## The 45-point ceiling, and how it was lifted
 
 Every lead used to score exactly 45, and it was not a coincidence — it was a
 ceiling. `scoreLead` weights ICP fit 0.45, signals 0.35, contactability 0.20.
 With no email, contactability contributes **exactly zero**, so a perfect-fit
 lead with no signals lands at 0.45 × 100 = 45.
 
-That is now fixed, and the fix works. What it revealed is where the real
-constraint lives.
+Enrichment was never the problem. Once a company has a domain, **28% of them
+publish a role address** and the waterfall resolves it for free. The funnel was
+starved one step earlier: only 140 of 11,597 companies had a website on file.
 
-**Measured on the live database, not estimated:**
+**Three ways of getting domains, measured against each other:**
+
+| Approach | Domains | Cost |
+|---|---|---|
+| Guess them from the company name | **0** of 55 | free |
+| Brave search over leads | **6** of 250 (2.4%) | 250 of 2,000 monthly queries |
+| **Import the register's own website column** | **5,400** | free, no API |
+
+The third one won by three orders of magnitude, and the data had been sitting
+in `od_firme.csv` the whole time. Scanning all 4,019,034 rows: **11,050
+companies carry a usable website**, 5,700 of them still trading. Nobody needs
+to guess or search for those.
+
+What that produced, end to end and measured at each step:
 
 | Step | Result |
 |---|---|
-| Companies with a domain | **140 of 11,597** — 1.2% |
-| Of those, publishing a role address | **37 of 140** — **26.4%** |
-| Leads with a domain, after sourcing 758 | **5** |
-| Of those, resolved to an address | **3 of 5** — 60% |
+| Companies with a website, nationally | **11,050 of 4.0M rows** — 0.27% |
+| Still trading, imported | **5,700** |
+| Publishing a role address | **1,525 of 5,400** — **28.2%** |
+| Leads sourced from contactable companies | **153** |
+| Leads that resolved to an address | **35** |
 | Score movement on a hit | **45 → 54**, every time |
-
-So the pipeline converts at roughly **26%** once it has a domain, and the free
-path is genuinely free — no key, no quota, one page fetch per company. The
-funnel does not leak at enrichment. It leaks at the very top: 99% of the
-register has no website on file, so there is nothing to crawl.
-
-**That makes domain discovery the highest-value thing left** — not as a feature
-in its own right, but because it is the only input the email pipeline is short
-of. Each domain found is worth ~0.26 of an email.
 
 The 54 is a role address (`office@`, `contact@`) at 0.55 confidence with the
 0.7 role-address penalty. A verified personal address would reach ~65, which
 needs either a vendor (step 5c) or mailbox verification (step 5d).
 
+**What still limits it.** 5,406 companies have a domain out of 17,156, and the
+agent's CAEN filter narrows that to 199. Widening the ICP, or importing more of
+the register, moves the number far more than any enrichment work will.
 > If you are reading this in an unzipped export rather than a clone, there is no
 > git history in the folder and `npm install` has to run before anything else.
 
@@ -520,10 +524,12 @@ unsubscribe endpoint, Copilot.
   generated from, so matching it is near-circular. A wrong domain is worse than
   none — it poisons email inference, tech-stack detection and every signal
   derived from them, and nothing downstream would suspect it.
-- **Only ~1% of registered companies list a website.** 140 of 11,597 in the Cluj
-  slice. Everything domain-based — crawling, tech-stack signals, email pattern
-  inference — therefore reaches a small minority from the registry alone.
-  Finding domains for the rest is an unsolved problem, not a wiring gap.
+- **Only 0.27% of registered companies list a website — so import exactly
+  those.** 11,050 of the register's 4,019,034 rows carry one, and they are the
+  only rows anything domain-based can work with: crawling, tech-stack signals,
+  email inference. `--has-website` is not an optimisation, it is the difference
+  between 140 usable companies and 5,400. Finding domains for the *rest* is
+  still unsolved and, at 2.4% from search, not currently worth paying for.
 - **ANAF 404s for a CUI it does not know.** Not an empty result — a 404. The
   client treats that as "not found" now; before, one unregistered CUI threw and
   killed a batch. A meaningful share of registry rows are not registered for
