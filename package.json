@@ -26,6 +26,7 @@
     "rescore:leads": "tsx scripts/rescore-leads.ts",
     "measure:keyword-sourcing": "tsx scripts/measure-keyword-sourcing.ts",
     "build:industries": "tsx scripts/build-industries.ts",
+    "repair:caen-labels": "tsx scripts/repair-caen-labels.ts",
     "backfill:industries": "tsx scripts/backfill-industries.ts",
     "verify:onboarding": "tsx scripts/verify-onboarding.ts",
     "verify:llm": "tsx scripts/verify-llm.ts",
