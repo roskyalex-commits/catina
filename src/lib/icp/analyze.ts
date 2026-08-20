@@ -1,7 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { DETECTABLE_TECH, type SiteSnapshot } from "@/lib/crawl/fetch-site";
+import { LlmError, type StructuredExtractor } from "@/lib/llm/types";
 import { INDUSTRY_KEYS } from "./industries";
 import { normaliseIcpIndustries } from "./normalise-industries";
 import {
@@ -245,32 +244,45 @@ function dedupe(values: string[]): string[] {
  */
 export async function analyzeSnapshot(
   snapshot: SiteSnapshot,
-  apiKey: string,
+  extractor: StructuredExtractor,
 ): Promise<AnalyzeResult> {
-  const client = new Anthropic({ apiKey });
-
-  const message = await client.messages.parse({
-    model: "claude-opus-5",
-    max_tokens: 16000,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildUserMessage(snapshot) }],
-    output_config: { format: zodOutputFormat(extractionSchema) },
-  });
-
-  if (message.stop_reason === "refusal") {
-    throw new Error(
-      "The model declined to analyse this site. Try a different URL.",
-    );
-  }
-  if (!message.parsed_output) {
-    throw new Error(
-      `Could not build an ICP from ${snapshot.domain} — the site may not ` +
-        `describe what the business sells clearly enough.`,
-    );
+  let extracted: z.infer<typeof extractionSchema>;
+  try {
+    extracted = await extractor.extract({
+      system: SYSTEM_PROMPT,
+      user: buildUserMessage(snapshot),
+      schema: extractionSchema,
+      schemaName: "icp",
+    });
+  } catch (error) {
+    /*
+     * Vendor failures become sentences about this site.
+     *
+     * The reasons are collapsed by `StructuredExtractor` precisely so this
+     * stays one place: whichever provider ran, the user is told what went
+     * wrong with *their site*, not what an API returned.
+     */
+    if (error instanceof LlmError) {
+      if (error.reason === "refused") {
+        throw new Error("The model declined to analyse this site. Try a different URL.");
+      }
+      if (error.reason === "quota") {
+        throw new Error(
+          `${extractor.label} is out of quota for now. Try again later, or set the other provider's key.`,
+        );
+      }
+      if (error.reason === "truncated" || error.reason === "unparseable") {
+        throw new Error(
+          `Could not build an ICP from ${snapshot.domain} — the site may not ` +
+            `describe what the business sells clearly enough.`,
+        );
+      }
+    }
+    throw error;
   }
 
   return {
-    icp: normalise(message.parsed_output),
+    icp: normalise(extracted),
     evidence: {
       domain: snapshot.domain,
       pagesRead: snapshot.pages.map((p) => ({ url: p.url, title: p.title })),

@@ -36,6 +36,18 @@ const secretSchema = z.object({
    */
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
 
+  /**
+   * The other model that can fill the ICP schema.
+   *
+   * Optional and second in preference, but not an afterthought: Gemini has a
+   * usable free tier, and the ICP analysis is the first screen a new user sees.
+   * "You need a paid account before this does anything" is a poor opening for a
+   * product whose pitch is that its data sources cost nothing.
+   */
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  /** Override the default `gemini-2.5-flash`. */
+  GEMINI_MODEL: z.string().min(1).optional(),
+
   /** 32-byte base64 key for AES-GCM encryption of OAuth refresh tokens. */
   ENCRYPTION_KEY: z.string().min(1),
 
@@ -135,6 +147,8 @@ export function describeEnv(bindings?: Record<string, unknown>) {
   const source = present({ ...process.env, ...(bindings ?? {}) });
   const parsed = fullSchema.safeParse(source);
   const optionalKeys = [
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
     "GOOGLE_CLIENT_ID",
     "HUNTER_API_KEY",
     "PDL_API_KEY",

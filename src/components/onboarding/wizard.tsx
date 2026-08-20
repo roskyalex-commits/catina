@@ -314,6 +314,20 @@ export function OnboardingWizard() {
               setIcp(next.icp);
               setEnabledSignals(next.enabledSignals);
             }}
+            onGenerateKeywords={async () => {
+              const response = await fetch("/api/v1/icp/keywords", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  valueProp: icp.valueProp,
+                  industries: icp.industries,
+                  existing: icp.keywords,
+                }),
+              });
+              if (!response.ok) throw new Error("keyword suggestion failed");
+              const payload = (await response.json()) as { keywords?: string[] };
+              return payload.keywords ?? [];
+            }}
           />
           <StepNav
             onBack={() => setStep(0)}

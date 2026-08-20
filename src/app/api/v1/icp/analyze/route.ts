@@ -3,6 +3,7 @@ import { z } from "zod";
 import { analyzeSnapshot } from "@/lib/icp/analyze";
 import { SiteFetchError, fetchSiteSnapshot } from "@/lib/crawl/fetch-site";
 import { getEnv } from "@/lib/env";
+import { NO_LLM_CONFIGURED, preferredExtractor } from "@/lib/llm/registry";
 
 /**
  * POST /api/v1/icp/analyze — the onboarding magic moment.
@@ -76,23 +77,17 @@ export async function POST(request: Request) {
    * catch below and be reported as "try again in a moment" — advice that will
    * never come true and sends the reader looking in the wrong place.
    */
-  const apiKey = getEnv().ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const extractor = preferredExtractor(getEnv());
+  if (!extractor) {
     return NextResponse.json(
-      {
-        error:
-          "Site analysis needs an Anthropic API key. Copy .env.example to " +
-          ".env.local, set ANTHROPIC_API_KEY, and restart the dev server. " +
-          "The rest of the app runs on demo data at /app without it.",
-        code: "not_configured",
-      },
+      { error: NO_LLM_CONFIGURED, code: "not_configured" },
       { status: 503 },
     );
   }
 
   try {
     const snapshot = await fetchSiteSnapshot(url);
-    const result = await analyzeSnapshot(snapshot, apiKey);
+    const result = await analyzeSnapshot(snapshot, extractor);
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof SiteFetchError) {
