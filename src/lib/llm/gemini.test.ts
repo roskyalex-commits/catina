@@ -97,6 +97,18 @@ describe("failing usefully", () => {
     ).rejects.toMatchObject({ reason: "truncated" });
   });
 
+  it("says where the token budget went when it ran out", async () => {
+    // A bare "cut short" sent the last reader probing the API by hand to find
+    // that reasoning had eaten 96% of the budget.
+    const body = {
+      ...candidate(['{"name":"a"'], "MAX_TOKENS"),
+      usageMetadata: { thoughtsTokenCount: 480, candidatesTokenCount: 5 },
+    };
+    const error = await run(respond(body)).catch((e) => e);
+    expect(error.message).toContain("480");
+    expect(error.message).toContain("reasoning");
+  });
+
   it("reports a safety stop as a refusal", async () => {
     await expect(run(respond(candidate([""], "SAFETY")))).rejects.toMatchObject({
       reason: "refused",
@@ -181,6 +193,29 @@ describe("the request", () => {
     const [url] = fetchImpl.mock.calls[0] as unknown as [string];
     expect(url).not.toContain("models/:");
     expect(url).toMatch(/\/models\/gemini-[\w.-]+:generateContent$/);
+  });
+
+  it("budgets for reasoning on top of what the caller asked for", async () => {
+    /*
+     * `maxOutputTokens` counts reasoning as well as answer, and this model
+     * reasons on every request — 480 tokens of it against a 500-token cap,
+     * measured. `ExtractInput.maxOutputTokens` means tokens of *answer* for
+     * every provider, so the adapter adds the headroom rather than making each
+     * caller know about one vendor's deliberation.
+     */
+    const fetchImpl = respond(candidate([JSON.stringify({ name: "a", tags: [] })]));
+    vi.stubGlobal("fetch", fetchImpl);
+    await new GeminiExtractor("k").extract({
+      system: "s",
+      user: "u",
+      schema,
+      schemaName: "t",
+      maxOutputTokens: 500,
+    });
+
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.generationConfig.maxOutputTokens).toBeGreaterThan(500);
   });
 
   it("uses the model it was given", async () => {

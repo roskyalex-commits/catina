@@ -31,6 +31,26 @@ const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
  */
 const DEFAULT_MODEL = "gemini-3.6-flash";
 const DEFAULT_MAX_TOKENS = 16_000;
+/**
+ * Room for the model to think, on top of whatever the caller asked for.
+ *
+ * `maxOutputTokens` counts reasoning tokens as well as answer tokens, and
+ * Gemini 3.x reasons on every request whether the task needs it or not.
+ * Measured on `gemini-3.6-flash` asking for six keywords: a 500-token cap spent
+ * **480 on thinking** and produced 5 tokens of answer before hitting
+ * MAX_TOKENS. The same request at 4,000 spent 621 thinking and answered in 66.
+ *
+ * `thinkingConfig: { thinkingBudget: 0 }` is not a way out — this model rejects
+ * it with a 400.
+ *
+ * So the adapter adds the headroom rather than the caller. `maxOutputTokens` in
+ * `ExtractInput` means "tokens of answer" for every provider, which is what
+ * Anthropic's `max_tokens` already means; a caller asking for a short list
+ * should not have to know that one vendor bills its own deliberation to that
+ * budget. Three times the observed cost, because reasoning scales with the
+ * schema and the ICP schema is far bigger than a keyword list.
+ */
+const THINKING_HEADROOM = 2_048;
 const TIMEOUT_MS = 60_000;
 
 type GeminiResponse = {
@@ -39,6 +59,7 @@ type GeminiResponse = {
     finishReason?: string;
   }[];
   promptFeedback?: { blockReason?: string };
+  usageMetadata?: { thoughtsTokenCount?: number; candidatesTokenCount?: number };
   error?: { message?: string; status?: string };
 };
 
@@ -81,7 +102,8 @@ export class GeminiExtractor implements StructuredExtractor {
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: toGeminiSchema(input.schema),
-        maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_TOKENS,
+        maxOutputTokens:
+          (input.maxOutputTokens ?? DEFAULT_MAX_TOKENS) + THINKING_HEADROOM,
         // Extraction, not writing. The same page should give the same ICP.
         temperature: 0,
       },
@@ -136,7 +158,20 @@ export class GeminiExtractor implements StructuredExtractor {
 
     const candidate = payload.candidates?.[0];
     if (candidate?.finishReason === "MAX_TOKENS") {
-      throw new LlmError(this.key, "truncated", "The response was cut short.");
+      /*
+       * Say where the budget went. A bare "cut short" sent the last reader
+       * probing the API by hand to discover that reasoning had eaten 96% of it.
+       */
+      const thoughts = payload.usageMetadata?.thoughtsTokenCount;
+      const answer = payload.usageMetadata?.candidatesTokenCount;
+      throw new LlmError(
+        this.key,
+        "truncated",
+        thoughts === undefined
+          ? "The response was cut short."
+          : `The response was cut short: ${thoughts} tokens went on reasoning ` +
+            `and ${answer ?? 0} on the answer. Raise maxOutputTokens.`,
+      );
     }
     if (candidate?.finishReason === "SAFETY" || candidate?.finishReason === "RECITATION") {
       throw new LlmError(this.key, "refused", `Stopped: ${candidate.finishReason}.`);
