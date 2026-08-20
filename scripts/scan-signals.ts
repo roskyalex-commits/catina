@@ -33,6 +33,7 @@ import {
 import { DETECTABLE_TECH } from "../src/lib/crawl/fetch-site";
 import type { RegistryCompany } from "../src/lib/pipeline/source-run";
 import { upsertSignals } from "../src/lib/signals/repository";
+import { DEFAULT_ENABLED_SIGNALS } from "../src/lib/agents/schema";
 import { selectSignalSources } from "../src/lib/signals/scanner";
 import { AnafClient } from "../src/lib/sources/anaf/client";
 import { requireEnv } from "./load-env";
@@ -52,14 +53,40 @@ type Options = {
   /** Overrides the agent's own lists, for calibrating a source before saving it. */
   keywords?: string[];
   competitors?: string[];
+  /** Opt in to every source, including the two that hit Google News. */
+  allSources: boolean;
 };
+
+/**
+ * Which sources to run, when the agent has not said.
+ *
+ * `selectSignalSources` treats an empty list as "every source", which is right
+ * for a library and wrong for an ops script. The live agent's `enabled_signals`
+ * is empty — no UI has ever written it — so a plain run silently opted into
+ * *both* Google News sources, at up to 20 seconds each per company when Google
+ * throttles. That is the difference between a scan that takes minutes and one
+ * that takes the better part of an hour.
+ *
+ * So an agent with no preference gets the cheap default set, and `--all-sources`
+ * is how you ask for the expensive ones on purpose.
+ */
+function sourceKeys(targeting: ScanTargeting, options: Options): string[] {
+  if (targeting.enabledSignals.length > 0) return targeting.enabledSignals;
+  return options.allSources ? [] : [...DEFAULT_ENABLED_SIGNALS];
+}
 
 function splitList(value: string): string[] {
   return value.split(",").map((v) => v.trim()).filter(Boolean);
 }
 
 function parseArgs(argv: string[]): Options {
-  const options: Options = { tier: "a", dryRun: false, web: true, liveAnaf: false };
+  const options: Options = {
+    tier: "a",
+    dryRun: false,
+    web: true,
+    liveAnaf: false,
+    allSources: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const next = () => argv[(i += 1)];
     switch (argv[i]) {
@@ -85,6 +112,9 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--live-anaf":
         options.liveAnaf = true;
+        break;
+      case "--all-sources":
+        options.allSources = true;
         break;
       // Calibration flags. Measuring a keyword list by first writing it to the
       // agent means every bad guess is a change the user has to undo.
@@ -350,7 +380,7 @@ async function main() {
       index += page.length;
       return { candidates: page, cursor: undefined, notes: [] };
     },
-    sources: (t) => selectSignalSources({ enabled: t.enabledSignals, anaf }),
+    sources: (t) => selectSignalSources({ enabled: sourceKeys(t, options), anaf }),
   };
 
   const byType = new Map<string, number>();

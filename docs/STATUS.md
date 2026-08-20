@@ -4,20 +4,25 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `f23b4e3` — the signal scanner is wired; signals stopped
-  being 35% of a constant zero.
-- **Green:** 710 tests, clean `typecheck` and `lint`.
+- **Last commit:** `41323a9` — the ICP matches on needs and competitors rather
+  than on industry codes.
+- **Green:** 759 tests, clean `typecheck` and `lint`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
-  decision-makers**, **1,559 harvested email addresses**, **165 companies
+  decision-makers**, **1,559 harvested email addresses**, **248 companies
   scanned for signals**. `/app` renders **911 leads**; **35 carry a real
-  address**, and the best now scores **63** rather than the old flat 45.
+  address**, **54 carry a signal**, and the best now scores **76** rather than
+  the old flat 45.
 - **Two structural gaps are closed.** Contactability (20% of the score) and
   signals (35%) both used to contribute exactly zero. Both now work. Read
   "The two constant zeros" below before anything else.
-- **Current work: making the ICP mean what a user means by it** — matching on
-  needs, keywords and competitor usage rather than CAEN codes. Plan at
+- **The ICP now means what a user means by it.** Keyword and competitor signals
+  fire on a *first* scan, against the page the scan already fetched. Measured
+  over the 82 companies whose site was actually read: `keyword_on_site` **41.5%**,
+  `competitor_tech` **19.5%** — against **0%** for hiring and news. Rescoring
+  moved **48 leads by an average of 13.3 points**.
+- **Current work: the ICP and the wizard around it.** Plan at
   `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`.
-  Phase 0 and Phase 1 are done; Phase 2 is next.
+  Phases 0, 1 and 2 are done; **Phase 3 (industries → NACE) is next**.
 
 ## The two constant zeros
 
@@ -83,12 +88,72 @@ on a lead carrying both an email and a signal.
 | `anaf_growth` | 1 | 1 |
 | `tech_stack`, `pricing_page` | 0 | skipped — need a previous scan to diff |
 
-So the sources that exist produce **almost nothing for Romanian SMBs**. The ones
-that will are `competitor_tech` and `keyword_on_site` (Phase 2 of the plan): both
-fire on a *first* scan with no diff, and both read the snapshot the scan already
-fetched, so they cost no extra request. They are also the two that answer the
-actual complaint — matching on what a company **uses and talks about** rather
-than on its CAEN code.
+So the sources that exist produce **almost nothing for Romanian SMBs**.
+
+### Where the signal actually was
+
+The prediction above was that `keyword_on_site` and `competitor_tech` would be
+the productive sources, because both fire on a *first* scan with no diff and both
+read a page the scan already fetched. That is now measured rather than predicted.
+
+Over **82 companies with a domain whose site was actually read**:
+
+| Source | Companies | Rate | Cost |
+|---|---|---|---|
+| `keyword_on_site` | **34** | **41.5%** | none — reads the shared snapshot |
+| `competitor_tech` | **16** | **19.5%** | none — reads the shared snapshot |
+| `newly_registered` | 2 | 2.4% | none — reads the row |
+| `tech_stack_added` | 1 | 1.2% | needs a previous scan |
+| `hiring_surge` | **0** | 0% | one HTTP request |
+| `funding_news` | **0** | 0% | one HTTP request |
+| `keyword_in_news` | **0** | 0% | one HTTP request |
+| `competitor_mention` | 0 | 0% | none, but nobody has named a text-only competitor |
+
+**The two free sources outproduce the five paid-in-latency ones by 50 to 1.**
+Rescoring moved **48 leads by an average of 13.3 points**, and the top lead went
+**54 → 76** on a competitor detection plus a keyword match plus an email. The
+score distribution is no longer flat.
+
+Two caveats worth carrying forward. `competitor_mention` has never fired because
+no agent has named a competitor without a detectable marker — it is untested
+against real data, not disproven. And **site reachability is a coin flip**: 82
+sites read against 83 unreachable, so every web-derived rate above is really
+"41.5% of the half we can read".
+
+The competitor ceiling is knowable in advance, from `company_scans.tech_stack`
+over the sites we have fingerprinted: WooCommerce **19.4%**, PrestaShop 4.2%,
+Magento 2.8%, HubSpot 2.8%. A seller displacing e-commerce platforms has about a
+quarter of every readable site as a target; one displacing HubSpot has one in
+thirty-five. The wizard's competitor picker should say so rather than let a user
+name something with no coverage and conclude the product is broken.
+
+### Keyword→company discovery does not work here, and that is now measured
+
+The plan's other half was sourcing *from* a keyword: search the web for a topic
+and turn the results into companies. `npm run measure:keyword-sourcing` spent 28
+Brave queries on four keywords and settled it.
+
+| | |
+|---|---|
+| Distinct non-aggregator `.ro` hosts found | **82** |
+| Of those, joinable to a row in `companies` | **2** |
+| Real `.ro` businesses we hold no registry row for | **80** |
+| Fresh companies per 100 queries | **7.1** (gate was 15) |
+
+The channel finds Romanian businesses perfectly well — about three per query.
+The problem is the join. Cătină sources from a registry, and a domain with no
+`companies` row has no CUI, no administrator and no route to a contact, so 80 of
+those 82 are discoveries nobody can act on. Worse, **both of the two that joined
+are ERP *vendors*, not ERP buyers** — a topic query returns the sellers of the
+topic, which is the same failure mode `keyword_on_site` has to be read for.
+
+So keyword search re-ranks companies we already hold rather than finding new
+ones, which is exactly what `keyword_on_site` already does for free and without
+a quota. Nothing was wired to it. The script stays as the record.
+
+Also learned the hard way: **Brave returns zero results for a TLD-only `site:`
+operator.** `"e-factura" firma site:.ro` came back empty while `"e-factura" firma`
+returned ten. The country restriction has to be applied on our side.
 
 > If you are reading this in an unzipped export rather than a clone, there is no
 > git history in the folder and `npm install` has to run before anything else.
@@ -158,6 +223,12 @@ Ops scripts, in the order a fresh database needs them: `import:onrc` →
 `import:reps` → `enrich:registry` → `enrich:emails --companies` → `source` →
 `enrich:emails` → `scan:signals` → `rescore:leads`.
 
+`scan:signals` takes `--keywords` and `--competitors` to calibrate a list
+without first writing it to the agent, and `--all-sources` to opt into the two
+Google News sources it otherwise leaves off. `measure:keyword-sourcing` is a
+spike, not part of the chain — it is hard-capped at 200 Brave queries and its
+verdict is already recorded above.
+
 `verify:rls` creates two workspaces and asserts one cannot read the other. It
 is not optional — an un-policied tenant table is a cross-org data leak.
 
@@ -197,10 +268,14 @@ Neither substitutes for the other, and the second still gates a real user.
 | `POST /api/v1/leads/[id]/enrich` | **Verified** — `npm run verify:emails`, 22 checks: RLS, 404s, re-run does not duplicate, score 45 → 54 |
 | The contacts table with an address | **Verified in a browser** — status pill, "role address" label, both Enrich buttons, no overflow at 1280 or 375px |
 | Domain discovery by name-guessing | **Verified as ineffective** — 0 of 55 on the live run, and the reason is structural |
-| Signal scan → `signals` → rescore | **Verified** — `npm run scan:signals`, 165 companies, 4 signals, 8 leads rescored, one to 63 |
-| The seven signal sources against real Romanian SMBs | **Verified as thin** — hiring 0/159, news 0/165. See the table above |
+| Signal scan → `signals` → rescore | **Verified** — 248 companies, 61 signals, **48 leads rescored, +13.3 points average, top lead 76** |
+| `keyword_on_site` against real Romanian sites | **Verified as the best source we have** — 34 of 82 readable sites (41.5%), zero extra requests |
+| `competitor_tech` against real Romanian sites | **Verified** — 16 of 82 (19.5%), fires on a first scan with no diff |
+| `competitor_mention` | **Never fired** — no agent has named a competitor without a detectable marker. Untested, not disproven |
+| Keyword → company discovery via web search | **Verified as unusable here** — 82 hosts found, **2** joinable, and both were vendors not buyers |
+| Brave Search | **Verified live** — 59 queries spent. A TLD-only `site:` operator returns **zero** results |
+| The seven original signal sources against real Romanian SMBs | **Verified as thin** — hiring 0/159, news 0/165, `keyword_news` 0/82. See the table above |
 | `company_scans` RLS | **Verified** — offline in `policies.test.ts`: any user reads, only the service role writes |
-| Brave Search / domain-search | **From documentation, never run.** Needs `BRAVE_SEARCH_API_KEY`; `BraveSearch.probe()` prints the raw payload |
 | Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
 | Claude ICP inference end to end | **Never run** with a real key |
 | Gmail send | Routes not written yet |
@@ -222,9 +297,34 @@ Each of these was made deliberately and has a cost attached to reversing it.
 - **Org bootstrap is a route, not a `handle_new_user` trigger.** A trigger that
   throws fails signup inside GoTrue with no surfaced error; a route returns a
   status code you can read in the network tab.
-- **No LinkedIn.** Engagement data needs a paid API or a terms-violating
-  scraper. Where the reference product plots "invitations sent", this plots
-  companies sourced and signals detected — things it can measure.
+- **No LinkedIn *yet*, but the slot is built.** Engagement data needs a paid API
+  or a terms-violating scraper, and there is no free legal substitute — so it
+  stays off. The user's instruction is explicit that this will be bought once
+  the product is working, and that more paid data will follow, so the seam is
+  built and empty rather than absent:
+
+  | Piece | Where |
+  |---|---|
+  | The vendor contract | `src/lib/signals/providers/types.ts` |
+  | Where a vendor gets added | `src/lib/signals/providers/registry.ts` — one line |
+  | Budget, isolation, evidence rules | `src/lib/signals/sources/person-engagement.ts` |
+  | Signal types it emits | `person_engaged_topic`, `person_engaged_competitor` |
+  | Person resolution | `signals.person_id`, `Signal.personLinkedinUrl`, `upsertSignals` |
+
+  Three rules hold there because they are expensive to get wrong once money is
+  involved: budget is checked **before** the call against the same `CreditLedger`
+  the email waterfall uses (one accounting system, not two); a lookup is charged
+  even when it returns empty or throws, because the vendor charges for it; and a
+  signal with no evidence URL and no person is **dropped**, because paying for
+  data is not an exemption from the rule that a user can click through to the
+  source. Connecting a provider changes nothing downstream of `SignalScanner`.
+
+  Until then the signal picker renders it as a visible "Not connected" row
+  carrying the reason, so the two Gojiberry categories with no free equivalent
+  are stated rather than quietly missing. `PAID_PROVIDER_CATALOGUE` in
+  `providers/types.ts` lists what each purchase would actually unlock.
+- **Where the reference product plots "invitations sent"**, this plots companies
+  sourced and signals detected — things it can measure.
 - **No reply tracking.** Reading a Gmail mailbox needs `gmail.readonly`, which
   Google classifies as **restricted**: an annual CASA Tier 2 assessment,
   roughly $540–1,000/yr. Sending needs only `gmail.send` and `gmail.compose`,
@@ -420,15 +520,15 @@ has rows.
    `src/lib/pipeline/signal-scan.ts`, `scripts/scan-signals.ts`,
    `scripts/rescore-leads.ts`, and `findSignals` supplied in both callers.
 
-   **Phase 2 — keyword and competitor signals. ← next, and the important one.**
-   `KeywordSiteSignalSource` (ICP keywords against the already-fetched snapshot,
-   strength by which page they appear on) and `CompetitorTechSignalSource`
-   (intersect the snapshot's tech stack with the ICP's named competitors).
-   **Both fire on a first scan with no diff and cost no extra request** — which
-   is why they, not the seven existing sources, are where the signal is for this
-   market. Adds `competitorTech` / `competitorNames` to the ICP.
+   ~~**Phase 2** — keyword and competitor signals.~~ **Done** (`41323a9`), and
+   it was the important one. `keyword_site`, `competitor_tech`,
+   `competitor_mention` and `keyword_news`; `competitorTech` / `competitorNames`
+   on the ICP and on `agents`; the `PersonSignalProvider` seam pulled forward
+   from Phase 5. Measured at **41.5%** and **19.5%** against **0%** for hiring
+   and news — see "Where the signal actually was" above. Keyword→company
+   *discovery* was measured and rejected; the script stays as the record.
 
-   **Phase 3 — industries → NACE.** `src/lib/icp/industries.ts`, ~30 industries
+   **Phase 3 — industries → NACE. ← next.** `src/lib/icp/industries.ts`, ~30 industries
    each mapping to the NACE codes that mean it. Makes `industries` load-bearing
    (today it is inert — produced by Claude, edited in the wizard, read by
    nothing) and `caenCodes` derived-but-overridable. Stop asking Claude for CAEN
@@ -438,10 +538,14 @@ has rows.
    Outreach, including the signal picker (**no UI has ever written
    `enabledSignals`**) and a lead preview with deterministic reject-to-refine.
 
-   **Phase 5 — the LinkedIn seam.** `PersonSignalProvider`, unimplemented, in
-   the style `MailboxVerifier` sets. Most of it already exists:
-   `SignalScanContext.people`, `signals.person_id`, `Signal.personLinkedinUrl`,
-   and `upsertSignals` already resolving that URL to a person id.
+   ~~**Phase 5 — the LinkedIn seam.**~~ **Done early** (`41323a9`), pulled
+   forward because Phase 4's picker needs the catalogue entry. See the
+   "No LinkedIn *yet*" decision above for the five pieces and the three rules.
+   What is *not* done and does not need a provider: **`contact_job_change` from
+   ONRC representative diffs.** A person replacing another as administrator is a
+   job change — dated, evidence-linked, and stronger than a LinkedIn headline
+   because it is a legal filing. Blocked only on having a second ONRC export to
+   diff against; `import-representatives.ts` is already idempotent.
 7. **Gmail OAuth.** `/api/v1/auth/google/{start,callback}`, storing the refresh
    token encrypted via the existing `src/lib/outreach/crypto.ts`. Needs a Google
    Cloud project first.
@@ -451,6 +555,36 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **An empty `enabled_signals` means *every* source, including the expensive
+  ones.** `selectSignalSources` treats an empty list as "run everything", which
+  is right for a library and wrong for an ops script — and no UI has ever
+  written that column, so every live agent has it empty. A plain
+  `npm run scan:signals` therefore opted into *both* Google News sources at up
+  to 20s each per company when Google throttles, turning a scan that should take
+  minutes into the better part of an hour. `scripts/scan-signals.ts` now falls
+  back to `DEFAULT_ENABLED_SIGNALS` and `--all-sources` is how you ask for the
+  rest on purpose. **The Phase 4 wizard must always write an explicit list.**
+- **A short keyword needs case-sensitive matching, or it poisons everything.**
+  The live agent targets `IT`. Folded to lower case and matched whole-word, that
+  hits the English word "it" several times a paragraph on the English-language
+  homepage of every Romanian software company in the register — every one of
+  them would have scored a keyword signal, and the signal component would have
+  gone from a constant zero to constant noise. `keywordPattern` in
+  `src/lib/signals/sources/text.ts` matches keywords of ≤4 characters that are
+  all-capitals case-sensitively, and everything longer case-insensitively. Do
+  not "simplify" that back to one flag.
+- **A keyword hit finds sellers as readily as buyers.** The crawler only fetches
+  home, about, pricing, products, solutions and customers — there is no blog and
+  no careers page — so a company matching your keyword may be a competitor
+  rather than a prospect. Measured directly: both of the two companies that
+  keyword *search* surfaced and that joined to the register were ERP vendors.
+  The mitigations are `exclusions`, and Phase 4's reject-to-refine. The evidence
+  snippet exists so a user can tell the difference in one glance.
+- **Site reachability is a coin flip, and it is the denominator for everything
+  web-derived.** 82 sites read against 83 unreachable on the same run. Every
+  web-source rate in this document is a rate over the half we can read, and the
+  cheapest way to double any of them is to make more sites readable, not to add
+  another source.
 - **The ANAF financials pass was never run.** Only **29 of 17,156** companies
   have both `revenue_ron` and `revenue_prev_ron`, so `anaf_growth` — the signal
   no international tool can match — has almost nothing to work with.
