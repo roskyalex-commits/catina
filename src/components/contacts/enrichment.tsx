@@ -47,6 +47,26 @@ export function useContactEnrichment(): EnrichmentContextValue {
   return context;
 }
 
+/**
+ * Provide the context, unless an ancestor already did.
+ *
+ * `ContactsTable` wraps itself in this so it works wherever it is rendered.
+ * Without it the table threw — "must be used inside ContactsEnrichmentProvider"
+ * — on the agent's Leads tab, which renders the table on its own with no
+ * toolbar beside it. A component that hard-requires a provider its own module
+ * exports is a trap for the next page that reuses it, and that page crashed.
+ *
+ * Nesting is not a risk here, because this adds a provider only when there is
+ * none. On the Contacts screen the outer provider wins and the toolbar and the
+ * table keep sharing one selection; on a page with no toolbar the table gets
+ * its own and there is nothing to share with.
+ */
+export function WithContactEnrichment({ children }: { children: React.ReactNode }) {
+  const existing = useContext(EnrichmentContext);
+  if (existing) return <>{children}</>;
+  return <ContactsEnrichmentProvider>{children}</ContactsEnrichmentProvider>;
+}
+
 export function ContactsEnrichmentProvider({
   children,
 }: {

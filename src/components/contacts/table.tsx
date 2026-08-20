@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   useContactEnrichment,
+  WithContactEnrichment,
   type EnrichState,
 } from "@/components/contacts/enrichment";
 import { ScoreExplanation } from "@/components/leads/score-badge";
@@ -33,7 +34,19 @@ import { cn } from "@/lib/utils";
  * - The row expands in place rather than opening a drawer, so the score
  *   breakdown can be compared against the row above it.
  */
+/**
+ * Self-sufficient: it supplies the enrichment context when nothing above it
+ * has. See `WithContactEnrichment` for why.
+ */
 export function ContactsTable({ rows }: { rows: ContactRow[] }) {
+  return (
+    <WithContactEnrichment>
+      <ContactsTableBody rows={rows} />
+    </WithContactEnrichment>
+  );
+}
+
+function ContactsTableBody({ rows }: { rows: ContactRow[] }) {
   // Selection lives in the provider so the toolbar's bulk Enrich button can see
   // it; without that it had nothing to act on and did nothing.
   const { selected, toggle, toggleAll, results, enrich } = useContactEnrichment();
