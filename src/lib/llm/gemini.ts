@@ -53,6 +53,23 @@ const DEFAULT_MAX_TOKENS = 16_000;
 const THINKING_HEADROOM = 2_048;
 const TIMEOUT_MS = 60_000;
 
+/**
+ * Statuses worth trying again, and how many times.
+ *
+ * A free tier answers "This model is currently experiencing high demand" with a
+ * 503 often enough that a single-shot call makes the product look broken — the
+ * first real ICP analysis hit exactly that, while the same key served eight
+ * keyword requests in a row without a hiccup.
+ *
+ * 400 and 404 are absent on purpose: a malformed schema or a model closed to
+ * new keys will fail identically forever, and retrying only delays the error
+ * that tells you what to fix.
+ */
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 3;
+/** 1s then 3s. Bounded because a route the user is waiting on has a deadline. */
+const BACKOFF_MS = [1_000, 3_000];
+
 type GeminiResponse = {
   candidates?: {
     content?: { parts?: { text?: string }[] };
@@ -109,42 +126,61 @@ export class GeminiExtractor implements StructuredExtractor {
       },
     };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    let payload: GeminiResponse = {};
+    let lastStatus = 0;
 
-    let response: Response;
-    try {
-      response = await fetch(`${BASE}/${this.model}:generateContent`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          // A header, not a query parameter: a key in the URL ends up in proxy
-          // logs and error messages.
-          "x-goog-api-key": this.apiKey,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      throw new LlmError(
-        this.key,
-        "upstream",
-        error instanceof Error && error.name === "AbortError"
-          ? `Gemini did not answer within ${TIMEOUT_MS / 1000}s.`
-          : String(error),
-      );
-    } finally {
-      clearTimeout(timer);
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+      let response: Response;
+      try {
+        response = await fetch(`${BASE}/${this.model}:generateContent`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            // A header, not a query parameter: a key in the URL ends up in
+            // proxy logs and error messages.
+            "x-goog-api-key": this.apiKey,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        throw new LlmError(
+          this.key,
+          "upstream",
+          error instanceof Error && error.name === "AbortError"
+            ? `Gemini did not answer within ${TIMEOUT_MS / 1000}s.`
+            : String(error),
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+
+      payload = (await response.json().catch(() => ({}))) as GeminiResponse;
+      lastStatus = response.status;
+      if (response.ok) break;
+
+      const canRetry = RETRYABLE.has(response.status) && attempt < MAX_ATTEMPTS - 1;
+      if (!canRetry) {
+        throw new LlmError(
+          this.key,
+          response.status === 429 ? "quota" : "upstream",
+          payload.error?.message ?? `${response.status} ${response.statusText}`,
+          response.status,
+        );
+      }
+      await sleep(BACKOFF_MS[attempt] ?? 3_000);
     }
 
-    const payload = (await response.json().catch(() => ({}))) as GeminiResponse;
-
-    if (!response.ok) {
+    // Defensive: the loop only falls through here on a success.
+    if (lastStatus !== 0 && lastStatus >= 400) {
       throw new LlmError(
         this.key,
-        response.status === 429 ? "quota" : "upstream",
-        payload.error?.message ?? `${response.status} ${response.statusText}`,
-        response.status,
+        lastStatus === 429 ? "quota" : "upstream",
+        payload.error?.message ?? String(lastStatus),
+        lastStatus,
       );
     }
 
@@ -225,6 +261,10 @@ export class GeminiExtractor implements StructuredExtractor {
     }
     return parsed.data as z.infer<T>;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Gemini occasionally wraps JSON in a markdown fence despite the mime type. */

@@ -277,6 +277,20 @@ export async function analyzeSnapshot(
             `describe what the business sells clearly enough.`,
         );
       }
+      /*
+       * Name the provider, not the site.
+       *
+       * An upstream failure fell through to the route's generic catch, which
+       * says "Could not analyse that site" — so a Google capacity blip read as
+       * a problem with the user's own website and sent them off editing it.
+       * The crawl already succeeded by the time we get here.
+       */
+      if (error.reason === "upstream") {
+        throw new Error(
+          `${extractor.label} could not be reached just now — the site was read ` +
+            `fine. Try again in a moment.`,
+        );
+      }
     }
     throw error;
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { AlertTriangle, Search } from "lucide-react";
 import { INDUSTRIES, naceLabel, resolveIndustry } from "@/lib/icp/industries";
 import { normaliseIcpIndustries } from "@/lib/icp/normalise-industries";
 import type { Icp } from "@/lib/icp/schema";
@@ -29,6 +29,17 @@ export function IndustryPicker({
   onChange: (next: Icp) => void;
 }) {
   const [query, setQuery] = useState("");
+
+  /*
+   * Whether the derived list hit the 60-code ceiling.
+   *
+   * Recomputed rather than threaded down, because the picker is the only place
+   * that can act on it and `normaliseIcpIndustries` is a table lookup. Six broad
+   * industries overflow the cap easily — SmartBill's real ICP produced exactly
+   * 60 — and without this the query is quietly narrower than the chips above it
+   * claim, with nothing on screen to say so.
+   */
+  const { truncated } = useMemo(() => normaliseIcpIndustries(icp), [icp]);
 
   const matches = useMemo(() => {
     const needle = query
@@ -159,6 +170,18 @@ export function IndustryPicker({
           );
         })}
       </ul>
+
+      {truncated && !icp.caenCodesOverridden && (
+        <p className="mt-2 flex items-start gap-2 rounded-[var(--radius-control)] bg-warning-soft px-3 py-2 text-[12px] text-warning">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>
+            These industries cover more activity codes than one agent can carry,
+            so the list below is cut at {icp.caenCodes.length}. Narrowing to the
+            two or three that matter most will target better than leaving it
+            clipped.
+          </span>
+        </p>
+      )}
 
       <details className="mt-3 rounded-[var(--radius-control)] border border-border p-3">
         <summary className="cursor-pointer text-[13px] text-muted">

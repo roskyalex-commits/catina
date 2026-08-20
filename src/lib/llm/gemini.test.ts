@@ -83,6 +83,37 @@ describe("reading the response", () => {
 });
 
 describe("failing usefully", () => {
+  it("retries a 503 and succeeds on the second try", async () => {
+    /*
+     * A free tier answers "This model is currently experiencing high demand"
+     * with a 503 often enough that a single-shot call looks broken — the first
+     * real ICP analysis hit exactly that.
+     */
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response(JSON.stringify({ error: { message: "high demand" } }), { status: 503 })
+        : new Response(
+            JSON.stringify(candidate([JSON.stringify({ name: "ok", tags: [] })])),
+            { status: 200 },
+          );
+    });
+
+    expect(await run(fetchImpl as never)).toEqual({ name: "ok", tags: [] });
+    expect(calls).toBe(2);
+  }, 15_000);
+
+  it("does not retry a 400, which will fail identically forever", async () => {
+    // A malformed schema or a model closed to new keys is permanent, and
+    // retrying only delays the error that says what to fix.
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ error: { message: "bad" } }), { status: 400 }),
+    );
+    await expect(run(fetchImpl as never)).rejects.toMatchObject({ reason: "upstream" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("calls a 429 a quota problem, not an outage", async () => {
     // The caller offers a different remedy for each — "try later" versus
     // "set the other provider's key".
