@@ -35,12 +35,42 @@ export const icpSchema = z.object({
 
   targetTitles: z.array(z.string().min(2).max(80)).min(1).max(15),
   targetSeniorities: z.array(z.enum(SENIORITIES)).max(7).default([]),
+  /**
+   * Free-text industries, in the seller's own words.
+   *
+   * Kept rather than replaced by `industryKeys`: it is the only thing a market
+   * outside Romania has, and it is what the user actually typed. `industryKeys`
+   * is the load-bearing field; this one survives so nothing the user wrote is
+   * silently discarded when it fails to resolve.
+   */
   industries: z.array(z.string().min(2).max(80)).max(15).default([]),
   /**
-   * Romanian CAEN activity codes. 4 digits, e.g. "4791" (online retail).
-   * This is the targeting axis no international competitor offers.
+   * Resolved industry keys — the load-bearing targeting field.
+   *
+   * Validated against the catalogue in `industry-definitions.ts` at the
+   * normalisation boundary rather than here, so an unrecognised industry
+   * degrades to an entry in `unresolved` instead of failing the whole ICP.
    */
-  caenCodes: z.array(z.string().regex(/^\d{4}$/)).max(20).default([]),
+  industryKeys: z.array(z.string().min(2).max(60)).max(37).default([]),
+  /**
+   * Romanian CAEN activity codes. 4 digits, e.g. "6210" (custom software).
+   * This is the targeting axis no international competitor offers, and it is
+   * still what the sourcing query filters on.
+   *
+   * Derived from `industryKeys` by `normaliseIcpIndustries` unless
+   * `caenCodesOverridden` is set. The ceiling is 60 rather than 20 because one
+   * industry can span both CAEN revisions and several divisions — "wholesale"
+   * alone expands to 57 classes.
+   */
+  caenCodes: z.array(z.string().regex(/^\d{4}$/)).max(60).default([]),
+  /**
+   * The user took the code list over by hand.
+   *
+   * Once true, nothing derives `caenCodes` again. Without this flag the first
+   * normalisation pass after an edit would silently overwrite a list somebody
+   * deliberately narrowed.
+   */
+  caenCodesOverridden: z.boolean().default(false),
   companyTypes: z.array(z.enum(COMPANY_TYPES)).max(8).default([]),
   /** ISO 3166-1 alpha-2. */
   countries: z.array(z.string().length(2)).max(30).default(["RO"]),

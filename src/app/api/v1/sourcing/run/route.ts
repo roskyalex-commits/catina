@@ -146,7 +146,7 @@ export async function POST(request: Request) {
     const { data: agentRow, error: agentError } = await supabase
       .from("agents")
       .select(
-        "id, name, value_prop, product_name, target_titles, target_seniorities, industries, caen_codes, countries, keywords, competitor_tech, competitor_names, exclusions, employee_min, employee_max, revenue_min_ron, revenue_max_ron, company_types, confidence",
+        "id, name, value_prop, product_name, target_titles, target_seniorities, industries, industry_keys, caen_codes, caen_codes_overridden, countries, keywords, competitor_tech, competitor_names, exclusions, employee_min, employee_max, revenue_min_ron, revenue_max_ron, company_types, confidence",
       )
       .eq("id", input.agentId)
       .maybeSingle();
@@ -166,7 +166,9 @@ export async function POST(request: Request) {
       targetTitles: stringArray(row.target_titles),
       targetSeniorities: stringArray(row.target_seniorities),
       industries: stringArray(row.industries),
+      industryKeys: stringArray(row.industry_keys),
       caenCodes: stringArray(row.caen_codes),
+      caenCodesOverridden: row.caen_codes_overridden === true,
       companyTypes: stringArray(row.company_types),
       countries: stringArray(row.countries),
       keywords: stringArray(row.keywords),

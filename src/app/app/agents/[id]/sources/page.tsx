@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import { Globe, Lock, Radar, Swords, Target } from "lucide-react";
+import { Building2, Globe, Lock, Radar, Swords, Target } from "lucide-react";
+import { industryByKey, naceLabel } from "@/lib/icp/industries";
 import { Card, Pill, SectionTitle } from "@/components/ui/primitives";
 import { getAgent } from "@/lib/data/agents";
 import { SIGNAL_SOURCE_CATALOGUE } from "@/lib/signals/scanner";
@@ -34,6 +35,13 @@ export default async function AgentSourcesPage({
         />
         <dl className="mt-4 space-y-4">
           <ChipRow icon={Globe} label="Countries" values={agent.sources.countries} />
+          <ChipRow
+            icon={Building2}
+            label="Industries"
+            values={agent.sources.industryKeys.map(
+              (key) => industryByKey(key)?.label ?? key,
+            )}
+          />
           <ChipRow icon={Target} label="Job titles" values={agent.sources.targetTitles} />
           <ChipRow icon={Radar} label="Keywords" values={agent.sources.keywords} />
           <ChipRow
@@ -46,12 +54,34 @@ export default async function AgentSourcesPage({
             label="Competitors matched as text"
             values={agent.sources.competitorNames}
           />
-          <ChipRow
-            icon={Target}
-            label="CAEN codes"
-            values={agent.sources.caenCodes}
-            mono
-          />
+          {/*
+            Collapsed, because CAEN codes are now derived from the industries
+            above rather than chosen. They stay visible because they are what
+            the query actually filters on, and a user debugging an empty result
+            needs to see them — but they are no longer the thing to read first.
+          */}
+          <details className="group">
+            <summary className="cursor-pointer list-none text-[13px] text-muted hover:text-foreground">
+              <span className="inline-flex items-center gap-1.5">
+                <Target className="h-3.5 w-3.5" />
+                {agent.sources.caenCodes.length} CAEN codes, derived from those industries
+              </span>
+            </summary>
+            <dd className="mt-2 space-y-1">
+              {agent.sources.caenCodes.length === 0 ? (
+                <p className="text-[13px] text-muted">
+                  None — sourcing will match on size and location alone.
+                </p>
+              ) : (
+                agent.sources.caenCodes.map((code) => (
+                  <p key={code} className="text-[12px] text-muted">
+                    <span className="font-mono text-foreground">{code}</span>{" "}
+                    {naceLabel(code) ?? ""}
+                  </p>
+                ))
+              )}
+            </dd>
+          </details>
         </dl>
       </Card>
 

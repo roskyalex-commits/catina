@@ -57,7 +57,9 @@ export function agentInsertFrom(
     target_titles: input.targetTitles,
     target_seniorities: input.targetSeniorities,
     industries: input.industries,
+    industry_keys: input.industryKeys,
     caen_codes: input.caenCodes,
+    caen_codes_overridden: input.caenCodesOverridden,
     countries: input.countries,
     keywords: input.keywords,
     competitor_tech: input.competitorTech,
@@ -166,6 +168,8 @@ export function agentDetailFrom(
     leads: [],
     sources: {
       keywords: stringArray(row.keywords),
+      industries: stringArray(row.industries),
+      industryKeys: stringArray(row.industry_keys),
       caenCodes: stringArray(row.caen_codes),
       countries: stringArray(row.countries),
       targetTitles: stringArray(row.target_titles),

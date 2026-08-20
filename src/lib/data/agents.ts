@@ -26,7 +26,7 @@ import type { AgentDetail, AgentSummary } from "./types";
 // One line, not a concatenation: supabase-js reads this literal at the type
 // level to shape the result, and `"a" + "b"` widens to `string`.
 const AGENT_COLUMNS =
-  "id, name, status, countries, keywords, caen_codes, target_titles, enabled_signals, next_launch_at, created_at";
+  "id, name, status, countries, keywords, industries, industry_keys, caen_codes, competitor_tech, competitor_names, target_titles, enabled_signals, next_launch_at, created_at";
 
 /**
  * Lead counts per agent.

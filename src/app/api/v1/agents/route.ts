@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { agentInsertFrom, agentSummaryFrom } from "@/lib/agents/mapper";
 import { createAgentSchema } from "@/lib/agents/schema";
+import { normaliseIcpIndustries } from "@/lib/icp/normalise-industries";
 import { PLANS } from "@/lib/billing/limits";
 import { isDatabaseConfigured } from "@/lib/env";
 import { getSessionContext } from "@/lib/supabase/server";
@@ -121,7 +122,15 @@ export async function POST(request: Request) {
 
   let input;
   try {
-    input = createAgentSchema.parse(await request.json());
+    const parsed = createAgentSchema.parse(await request.json());
+    /*
+     * The second of exactly two places industries become CAEN codes — the
+     * other is `normalise` in `icp/analyze.ts`. Deriving at both boundaries and
+     * nowhere else is what stops a stored agent and a live query from
+     * disagreeing about what the agent targets. A user who took the code list
+     * over keeps it: `caenCodesOverridden` short-circuits the derivation.
+     */
+    input = { ...parsed, ...normaliseIcpIndustries(parsed).icp };
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(

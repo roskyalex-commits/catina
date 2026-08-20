@@ -141,6 +141,9 @@ export type AgentDetail = AgentSummary & {
   leads: ContactRow[];
   sources: {
     keywords: string[];
+    industries: string[];
+    /** Keys from `industry-definitions.ts`; `caenCodes` is derived from these. */
+    industryKeys: string[];
     caenCodes: string[];
     countries: string[];
     targetTitles: string[];

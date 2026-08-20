@@ -29,6 +29,13 @@
       "when": 1787192213203,
       "tag": "0003_stiff_nico_minoru",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787194440365,
+      "tag": "0004_premium_patriot",
+      "breakpoints": true
     }
   ]
 }

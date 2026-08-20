@@ -2,6 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { DETECTABLE_TECH, type SiteSnapshot } from "@/lib/crawl/fetch-site";
+import { INDUSTRY_KEYS } from "./industries";
+import { normaliseIcpIndustries } from "./normalise-industries";
 import {
   COMPANY_TYPES,
   SENIORITIES,
@@ -42,12 +44,20 @@ const extractionSchema = z.object({
   industries: z
     .array(z.string())
     .describe("3-8 industries these buyers work in, in English."),
-  caenCodes: z
-    .array(z.string())
+  /*
+   * Was `caenCodes: string[]` — "give me the 4-digit Romanian activity code for
+   * this industry". That was the last unchecked model→SQL path in the product:
+   * nothing downstream validated the codes, a wrong one silently returned the
+   * wrong companies, and it is unconstrained recall of a 1,000-entry table that
+   * has been renumbered twice. A constrained choice over 37 named industries is
+   * something a model is reliable at; the codes now come from the official
+   * nomenclator via `normaliseIcpIndustries`.
+   */
+  industryKeys: z
+    .array(z.enum(INDUSTRY_KEYS))
     .describe(
-      "Romanian CAEN activity codes matching those industries, as 4-digit " +
-        "strings (e.g. '4791' online retail, '6201' custom software). " +
-        "Empty array if the target market is clearly not Romania.",
+      "2-5 industries the *buyers* operate in, chosen from the list. Never the " +
+        "seller's own industry. Empty array only if none of them fit.",
     ),
   companyTypes: z.array(z.enum(COMPANY_TYPES)).describe("Company archetypes."),
   countries: z
@@ -105,7 +115,7 @@ Three judgement calls worth care:
 
 Market. Decide from site language, currency, phone and address formats, and named customers, not from the domain suffix alone. A .ro site selling in EUR to named German customers is not a Romania-only business.
 
-CAEN codes. These are the Romanian activity codes we use to query the national company registry, and they are the sharpest targeting axis available for Romanian buyers, so get them right. Give the codes for the industries the target buyers operate in, never the seller's own code. Return an empty array when the target market is clearly outside Romania.
+Industries. Pick the industries the target BUYERS operate in, never the seller's own. These resolve to Romanian activity codes we query the national company registry with, so a wrong pick returns the wrong companies. Choose two to five; prefer the narrower one where both fit, and leave the array empty rather than reaching for a loose match. Also fill the free-text industries field in the seller's own words, even where it says the same thing — it is what a market outside Romania has instead.
 
 Competitors. We look for these running on a prospect's own website, so name the product a buyer would already be paying for, not the category. "HubSpot", not "marketing automation". Include the incumbent everyone in this category displaces even when the site is too polite to name it. Leave the array empty rather than inventing a rival you have no basis for.`;
 
@@ -183,9 +193,10 @@ export function normalise(raw: z.infer<typeof extractionSchema>): Icp {
     targetTitles: dedupe(raw.targetTitles).slice(0, 15),
     targetSeniorities: [...new Set(raw.targetSeniorities)],
     industries: dedupe(raw.industries).slice(0, 15),
-    // Drop anything that isn't a real 4-digit CAEN code rather than failing the
-    // whole parse — the user can add codes back in onboarding step 2.
-    caenCodes: dedupe(raw.caenCodes.filter((c) => /^\d{4}$/.test(c.trim()))).slice(0, 20),
+    industryKeys: dedupe(raw.industryKeys ?? []),
+    // Derived from `industryKeys` below, never asked of the model.
+    caenCodes: [],
+    caenCodesOverridden: false,
     companyTypes: [...new Set(raw.companyTypes)],
     countries: dedupe(
       raw.countries.map((c) => c.trim().toUpperCase()).filter((c) => c.length === 2),
@@ -209,7 +220,12 @@ export function normalise(raw: z.infer<typeof extractionSchema>): Icp {
   if (candidate.countries.length === 0) candidate.countries = ["RO"];
   if (candidate.targetTitles.length === 0) candidate.targetTitles = ["Founder"];
 
-  return icpSchema.parse(candidate);
+  /*
+   * The one place an ICP produced by a model becomes CAEN codes. Doing it here
+   * rather than in the caller means every path that builds an ICP from the
+   * model gets derived codes, including any future one.
+   */
+  return normaliseIcpIndustries(icpSchema.parse(candidate)).icp;
 }
 
 function dedupe(values: string[]): string[] {

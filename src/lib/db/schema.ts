@@ -100,9 +100,27 @@ export const agents = pgTable(
     targetTitles: text("target_titles").array().notNull().default([]),
     /** e.g. ["c_level", "vp", "director"] */
     targetSeniorities: text("target_seniorities").array().notNull().default([]),
+    /** Free text, in the seller's own words. The only thing a non-RO market has. */
     industries: text("industries").array().notNull().default([]),
-    /** Romanian CAEN activity codes — the RO-native targeting axis. */
+    /** Keys from `industry-definitions.ts` — the load-bearing targeting field. */
+    industryKeys: text("industry_keys").array().notNull().default([]),
+    /**
+     * Romanian CAEN activity codes — the RO-native targeting axis, and still
+     * what the sourcing query filters on.
+     *
+     * Derived from `industryKeys` at the ICP boundary rather than stored
+     * independently, so a row and a live query cannot disagree about what the
+     * agent targets.
+     */
     caenCodes: text("caen_codes").array().notNull().default([]),
+    /**
+     * The user edited the code list by hand; stop deriving it.
+     *
+     * Backfilled true for every agent that already had codes, because those
+     * were produced by a model rather than by an industry choice and silently
+     * replacing them would change what a working agent targets.
+     */
+    caenCodesOverridden: boolean("caen_codes_overridden").notNull().default(false),
     countries: text("countries").array().notNull().default(["RO"]),
     keywords: text("keywords").array().notNull().default([]),
     /**

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalise } from "./analyze";
+import { naceCodesFor } from "./industries";
 
 /**
  * `normalise` is the seam between what the model returns and what the app
@@ -14,7 +15,7 @@ const base = {
   targetTitles: ["Director General", "Contabil Sef"],
   targetSeniorities: ["c_level" as const],
   industries: ["Accounting", "Retail"],
-  caenCodes: ["6920", "4791"],
+  industryKeys: ["accounting_legal", "retail"],
   companyTypes: ["smb" as const],
   countries: ["RO"],
   keywords: ["facturare", "e-factura"],
@@ -29,20 +30,37 @@ const base = {
 describe("normalise", () => {
   it("passes a well-formed extraction through intact", () => {
     const icp = normalise(base);
-    expect(icp.caenCodes).toEqual(["6920", "4791"]);
+    // The base fixture picks accounting_legal and retail, and its free-text
+    // "Accounting"/"Retail" resolve to the same two, so the codes are the union
+    // of exactly those industries and nothing the model made up.
+    expect(icp.industryKeys).toEqual(["accounting_legal", "retail"]);
+    expect(icp.caenCodes).toEqual(naceCodesFor(["accounting_legal", "retail"]));
     expect(icp.employeeMin).toBe(5);
     expect(icp.employeeMax).toBe(250);
     expect(icp.countries).toEqual(["RO"]);
   });
 
-  it("drops malformed CAEN codes instead of failing the whole parse", () => {
-    // A dropped code costs the user one checkbox in onboarding step 2;
-    // a thrown error costs them the entire analysis.
-    const icp = normalise({
-      ...base,
-      caenCodes: ["6920", "62", "software", "47910", " 4791 ", ""],
-    });
-    expect(icp.caenCodes).toEqual(["6920", "4791"]);
+  it("derives CAEN codes from the chosen industries rather than asking for them", () => {
+    // The model no longer returns codes at all — that was the last unchecked
+    // model→SQL path in the product. Every code here comes from the official
+    // nomenclator via the industry the model picked.
+    const icp = normalise({ ...base, industryKeys: ["software"] });
+
+    expect(icp.industryKeys).toContain("software");
+    // Both CAEN revisions, which is the thing a hand-written list gets wrong:
+    // 6201 is custom software under CAEN 2008 and 6210 under CAEN 2025, and
+    // `companies.caen` holds thousands of rows of each.
+    expect(icp.caenCodes).toContain("6201");
+    expect(icp.caenCodes).toContain("6210");
+    expect(icp.caenCodes.every((code) => /^\d{4}$/.test(code))).toBe(true);
+  });
+
+  it("ignores an industry key that is not in the catalogue", () => {
+    // z.enum makes this unreachable from the model, but `normalise` is also the
+    // seam a stored row passes back through, and rows outlive catalogues.
+    const icp = normalise({ ...base, industryKeys: ["software", "teleportation"] });
+    expect(icp.industryKeys).toContain("software");
+    expect(icp.industryKeys).not.toContain("teleportation");
   });
 
   it("treats 0 headcount as unknown rather than a literal bound", () => {
