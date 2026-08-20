@@ -18,7 +18,12 @@ export class AnthropicExtractor implements StructuredExtractor {
   readonly key = "anthropic";
   readonly label = "Claude (ANTHROPIC_API_KEY)";
 
-  constructor(private readonly apiKey?: string) {}
+  private readonly apiKey?: string;
+
+  /** Blank is unset — see the note in `gemini.ts`. */
+  constructor(apiKey?: string) {
+    this.apiKey = apiKey?.trim() || undefined;
+  }
 
   isConfigured(): boolean {
     return Boolean(this.apiKey);

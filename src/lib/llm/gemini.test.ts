@@ -158,6 +158,26 @@ describe("the request", () => {
     expect(body.systemInstruction.parts[0].text).toBe("s");
   });
 
+  it("falls back to the default when the model is blank", async () => {
+    /*
+     * The bug this pins: a default parameter only fires on `undefined`, so
+     * `GEMINI_MODEL=` in a .env file sailed past it and built
+     * `.../models/:generateContent` — a 404 that reads exactly like a wrong
+     * model name and sends the reader hunting through Google's model list.
+     */
+    const fetchImpl = respond(candidate([JSON.stringify({ name: "a", tags: [] })]));
+    vi.stubGlobal("fetch", fetchImpl);
+    await new GeminiExtractor("k", "").extract({
+      system: "s",
+      user: "u",
+      schema,
+      schemaName: "t",
+    });
+    const [url] = fetchImpl.mock.calls[0] as unknown as [string];
+    expect(url).toContain("gemini-2.5-flash");
+    expect(url).not.toContain("models/:");
+  });
+
   it("uses the model it was given", async () => {
     const fetchImpl = respond(candidate([JSON.stringify({ name: "a", tags: [] })]));
     vi.stubGlobal("fetch", fetchImpl);

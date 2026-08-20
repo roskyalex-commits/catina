@@ -16,13 +16,20 @@ import { LlmError, type ExtractInput, type StructuredExtractor } from "./types";
  * which this product uses.
  *
  * Claude stays the default when both keys are present. This is the fallback,
- * and `gemini-2.5-flash` is chosen over Pro because the task is extraction
- * against a schema rather than reasoning, and Flash is what the free tier is
- * generous with.
+ * and Flash is chosen over Pro because the task is extraction against a schema
+ * rather than reasoning, and Flash is what the free tier is generous with.
  */
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_MODEL = "gemini-2.5-flash";
+/*
+ * Google's own recommendation, taken from the migration message the API
+ * returns. `gemini-2.5-flash` was the default here and is closed to new keys —
+ * it still appears in `models.list`, so the only way to find out is to call it
+ * and read the 404. Pinned rather than `gemini-flash-latest`, because a model
+ * that changes underneath us would silently change every ICP the product
+ * produces. Override with `GEMINI_MODEL` when a newer Flash is worth moving to.
+ */
+const DEFAULT_MODEL = "gemini-3.6-flash";
 const DEFAULT_MAX_TOKENS = 16_000;
 const TIMEOUT_MS = 60_000;
 
@@ -39,10 +46,25 @@ export class GeminiExtractor implements StructuredExtractor {
   readonly key = "gemini";
   readonly label = "Gemini (GEMINI_API_KEY)";
 
-  constructor(
-    private readonly apiKey?: string,
-    private readonly model: string = DEFAULT_MODEL,
-  ) {}
+  private readonly apiKey?: string;
+  private readonly model: string;
+
+  /*
+   * Blank is unset, for both of these.
+   *
+   * A default parameter only fires on `undefined`, and dotenv parses
+   * `GEMINI_MODEL=` as `""` — so a commented-out-by-blanking line sailed past
+   * the default and built `.../models/:generateContent`, which Google answers
+   * with a 404 that reads exactly like a wrong model name. `.env.example`
+   * ships that line blank, so every fresh setup starts in that state.
+   *
+   * `getEnv()` already strips empty values for this reason; this guard is here
+   * because a constructor cannot assume its caller went through it.
+   */
+  constructor(apiKey?: string, model?: string) {
+    this.apiKey = apiKey?.trim() || undefined;
+    this.model = model?.trim() || DEFAULT_MODEL;
+  }
 
   isConfigured(): boolean {
     return Boolean(this.apiKey);

@@ -35,6 +35,16 @@ describe("preference order", () => {
     expect(allExtractors({}).every((e) => !e.isConfigured())).toBe(true);
   });
 
+  it("treats a blank key as no key at all", () => {
+    /*
+     * dotenv parses `GEMINI_API_KEY=` as `""`, not undefined, and `.env.example`
+     * ships every provider line blank. Without this, a fresh setup reports the
+     * provider as configured and then fails at the call.
+     */
+    expect(preferredExtractor({ GEMINI_API_KEY: "" })).toBeNull();
+    expect(preferredExtractor({ ANTHROPIC_API_KEY: "   " })).toBeNull();
+  });
+
   it("labels each provider with the variable that turns it on", () => {
     for (const extractor of allExtractors({})) {
       expect(extractor.label).toMatch(/API_KEY/);
