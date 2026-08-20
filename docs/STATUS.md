@@ -4,13 +4,13 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `cafe596` — the SIGNAL column shows signals; `dev:session` for looking at real data.
-- **Green:** 845 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding`.
+- **Last commit:** `1974543` — the wizard runs end to end on a real site, with a real model key.
+- **Green:** 852 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
-  decision-makers**, **1,559 harvested email addresses**, **248 companies
-  scanned for signals**. `/app` renders **911 leads**; **35 carry a real
-  address**, **54 carry a signal**, and the best now scores **76** rather than
-  the old flat 45.
+  decision-makers**, **1,566 harvested email addresses**, **401 companies
+  scanned for signals**, **2,428 with both ANAF filing years**. `/app` renders
+  **924 leads**; **38 carry a real address**, **64 carry a signal**, and the
+  best scores **76** rather than the old flat 45.
 - **Two structural gaps are closed.** Contactability (20% of the score) and
   signals (35%) both used to contribute exactly zero. Both now work. Read
   "The two constant zeros" below before anything else.
@@ -19,14 +19,21 @@ re-explained or re-derived. Update it when the answers change.
   over the 82 companies whose site was actually read: `keyword_on_site` **41.5%**,
   `competitor_tech` **19.5%** — against **0%** for hiring and news. Rescoring
   moved **48 leads by an average of 13.3 points**.
-- **The model key is no longer a single point of failure.** `ANTHROPIC_API_KEY`
-  *or* `GEMINI_API_KEY` fills the ICP schema — Gemini has a free tier, so the
-  first screen works without paying anyone. `npm run verify:llm` says whether a
-  key works before you go looking at the crawler.
-- **Current work: the ICP and the wizard around it.** Plan at
-  `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`.
-  Phases 0–4 are done; **Phase 5 is mostly done early** — what is left is
-  `contact_job_change` from ONRC representative diffs, which needs a second export.
+- **The ICP analysis has now actually run**, on a real Gemini key, against
+  smartbill.ro — the last never-executed path in the product. Either
+  `ANTHROPIC_API_KEY` *or* `GEMINI_API_KEY` works; Claude wins when both are
+  set. `npm run verify:llm` answers whether a key works before you go looking
+  at the crawler.
+- **The wizard runs end to end.** Sources → Signals → Target → Preview →
+  Outreach, verified in a browser against a live site. See "What the wizard
+  actually produced" below.
+- **The plan is finished.** `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`,
+  Phases 0–5. All that remains of Phase 5 is `contact_job_change` from ONRC
+  representative diffs, which needs a second export to diff against.
+- **Next, in rough order of value:** finish the ANAF financials pass (2,894
+  companies left, ~1.8h), re-scan and re-score so those filings become
+  `anaf_growth` signals, then Gmail OAuth — the only thing between this and a
+  lead actually being contacted.
 
 ## The two constant zeros
 
@@ -159,6 +166,65 @@ Also learned the hard way: **Brave returns zero results for a TLD-only `site:`
 operator.** `"e-factura" firma site:.ro` came back empty while `"e-factura" firma`
 returned ten. The country restriction has to be applied on our side.
 
+## What the wizard actually produced
+
+Run against **smartbill.ro** with a Gemini key, in a browser, start to finish.
+This is the clearest single piece of evidence that the product does what it
+says, so it is written down rather than left in a terminal.
+
+Step 1 read the real site and inferred:
+
+> SmartBill offers cloud-based invoicing, inventory management, and fiscal
+> compliance software to help Romanian businesses and accountants manage
+> operations effortlessly.
+
+| Field | What came back |
+|---|---|
+| Industries | E-commerce, Retail, Wholesale & distribution, Accounting/audit/legal, Business support, Financial services |
+| CAEN codes | **60**, derived from those industries, not recited by the model |
+| Job titles | Administrator, Director General, Contabil Șef, Director Financiar, Manager Magazin, Antreprenor |
+| Keywords | program facturare, e-Factura, gestiune stocuri, soft contabilitate, SAF-T, program POS, e-Transport |
+| Competitors | FGO, Oblio, SAGA, CIEL, WinMENTOR, Solo, NextUp |
+| Signals | **7 chosen** |
+
+Two things in that table are worth more than the rest.
+
+The competitors are SmartBill's **actual** rivals in the Romanian accounting
+market, named off their own site — and all seven were routed to text matching
+rather than fingerprinting, because none of them ships a detectable marker.
+Claiming otherwise would have been a promise that never fired.
+
+And `enabled_signals` is set. The column has existed since the schema was laid
+down and **every agent before this one shipped with it empty**; the signal
+picker is the first UI ever to write it.
+
+### The preview loop works
+
+Five real leads came back — PROFILAXIS PUMP AND CONTROL, BARTER CONSTRUCT, LIV
+PLAST, DEAVET, UNIVERSAL TOOLS DISTRIBUTION — each with its industry chip and
+its repaired CAEN label, each scoring 45 (the no-email, no-signal baseline for
+a company never scanned). Rejecting three produced, instantly and with no model
+call:
+
+> **Stop targeting Wholesale & distribution** — 3 of 3 rejected companies are in it.
+> **Raise the minimum to 11 employees** — All 3 of 3 rejections with a headcount were smaller than that.
+
+### Four bugs that only a real key could find
+
+Every one of these reported itself as something other than what it was.
+
+| Symptom | Cause |
+|---|---|
+| `404 Not Found` | `GEMINI_MODEL=` is `""`, not `undefined`. A default parameter only fires on `undefined`, so the URL became `.../models/:generateContent`. |
+| `404`, different message | `gemini-2.5-flash` is closed to new keys. It still appears in `models.list`; the only way to find out is to call it. |
+| Keyword route `502` | Gemini 3.x reasons on every request and it counts against `maxOutputTokens`. A 500 cap spent **480 tokens thinking, 5 answering**. `thinkingBudget: 0` is rejected with a 400 on this model. |
+| `Could not analyse that site` | A 503 "high demand" from Google. The crawl had already succeeded. |
+
+And one the *preview* found: applying "Stop targeting Wholesale" took the ICP
+from 60 CAEN codes to **77** — more codes after removing an industry, past a
+ceiling `icpSchema` enforces. `applyRefinement` was a third derivation point
+that skipped the cap.
+
 ## CAEN is four registers wearing one column
 
 `companies.caen` looks like a single vocabulary and is not. The ONRC nomenclator
@@ -273,6 +339,14 @@ enrichment rewrites `caen` and leaves `caen_label` describing the old
 activity. `verify:llm` needs nothing but a model key and answers whether
 that key works.
 
+Two development-only helpers, both reversible and neither used by app code:
+`dev:session` mints a throwaway account so a browser can see real data — the
+app has no demo mode once Supabase is configured — and `agent:toggle` flips
+`is_active` so the free plan's single agent slot can be handed between two
+agents without deleting either. Right now **`Cluj software` is deactivated**
+and `SmartBill` holds the slot; the 924 leads belong to both and are
+untouched by the flag.
+
 `build:industries` is not part of that chain — it regenerates
 `src/lib/icp/nace-codes.generated.ts` from ONRC's `n_caen.csv` and only needs
 running when ONRC publishes a new export or an industry prefix changes. Use
@@ -330,7 +404,10 @@ Neither substitutes for the other, and the second still gates a real user.
 | Keyword → company discovery via web search | **Verified as unusable here** — 82 hosts found, **2** joinable, and both were vendors not buyers |
 | The onboarding wizard's four routes | **Verified against a live database** — `verify:onboarding`, 22 checks including the plan cap on a second preview run |
 | The signal picker, industry picker and preview | **Verified in a browser** — five-step header, 37 industries with live code counts, derived codes updating on toggle |
-| Either model key works | **Verified as far as it can be** — 28 offline tests over the Gemini adapter and the schema converter; the live call is unverified because neither key is set |
+| Gemini as the model provider | **Verified live** — `verify:llm` passes, and the wizard analysed smartbill.ro end to end |
+| The five-step wizard | **Verified in a browser, against a real site** — including the preview's five real leads and the deterministic reject-to-refine chips |
+| `enabled_signals` written by a UI | **Verified** — the SmartBill agent carries 7; every agent before it had an empty column |
+| Claude as the model provider | **Still never run.** `ANTHROPIC_API_KEY` is present but empty in `.env.local` |
 | `caen_label` repair | **Verified against the live database** — 6,369 of 17,156 rows fixed, second pass finds 0 |
 | Widening the agent to derived codes | **Verified** — +758 companies, +11 contactable, **+8 leads** after re-sourcing |
 | Brave Search | **Verified live** — 59 queries spent. A TLD-only `site:` operator returns **zero** results |
@@ -620,6 +697,35 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **A blank env var is `""`, not undefined.** dotenv parses `KEY=` as an empty
+  string, so a default parameter never fires and a `.optional()` never kicks in.
+  `getEnv()` strips empties via `present()` for exactly this reason, but any
+  code reading `process.env` directly — or any constructor taking a value from
+  a caller that did — has to guard for itself. This cost an afternoon: a blank
+  `GEMINI_MODEL` built `.../models/:generateContent` and returned a 404 that
+  read exactly like a wrong model name.
+- **Gemini's `maxOutputTokens` includes reasoning tokens.** Gemini 3.x thinks on
+  every request whether the task needs it or not, ~600 tokens regardless of
+  size, and `thinkingConfig: { thinkingBudget: 0 }` is a 400 on Flash. The
+  adapter adds `THINKING_HEADROOM` so `ExtractInput.maxOutputTokens` keeps
+  meaning "tokens of answer" for both providers. Do not lower a cap to what the
+  answer alone would need.
+- **A model can be listed and still be closed to you.** `gemini-2.5-flash`
+  appears in `models.list` and 404s for new keys; the migration message in the
+  error body is the only place the replacement is named. Pin the model, do not
+  use `gemini-flash-latest` — a model that changes underneath the product
+  silently changes every ICP it produces.
+- **There is exactly one place codes are derived, and it is
+  `normaliseIcpIndustries`.** `applyRefinement` grew a second one and produced a
+  list *past* the 60-code ceiling when dropping an industry from an
+  already-truncated ICP. If you find yourself calling `naceCodesFor` outside
+  that function, you are building the third.
+- **A component must not hard-require a provider its own module exports.**
+  `ContactsTable` threw and took the agent's Leads tab down, because that page
+  renders it without the toolbar it shares selection with. `WithContactEnrichment`
+  supplies the context only when no ancestor has. The same shape will bite any
+  other context added for a two-sibling screen.
+
 - **A long ops script must write as it goes.** The ANAF financials pass
   buffered every update and wrote once at the end; interrupted at 4,825 of
   5,401 it wrote **nothing** — three hours of requests gone, and nothing for
@@ -680,7 +786,13 @@ unsubscribe endpoint, Copilot.
   web-source rate in this document is a rate over the half we can read, and the
   cheapest way to double any of them is to make more sites readable, not to add
   another source.
-- ~~**The ANAF financials pass was never run.**~~ **Running** (`1928fc0`):
+- ~~**The ANAF financials pass was never run.**~~ **Half done.** **2,428 of
+  5,406** companies with a website now carry both filing years, against 5
+  before; **2,894 remain**, roughly 1.8 hours. Resume with the same command —
+  `--missing-financials` skips what is done. Then `scan:signals` and
+  `rescore:leads`, or the filings sit in the table without ever becoming
+  `anaf_growth` signals.
+  *Original note* (`1928fc0`):
   `npm run enrich:registry -- --has-website --missing-financials` covers the
   5,401 companies a web scan will ever look at. It is 2 requests per company
   (both years, because growth needs a pair) at ANAF's ~1.1s, so roughly 3.3
