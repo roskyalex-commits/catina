@@ -30,6 +30,7 @@
     "backfill:industries": "tsx scripts/backfill-industries.ts",
     "verify:onboarding": "tsx scripts/verify-onboarding.ts",
     "verify:llm": "tsx scripts/verify-llm.ts",
+    "dev:session": "tsx scripts/dev-session.ts",
     "verify:anaf": "tsx scripts/verify-anaf.ts",
     "verify:rls": "tsx scripts/verify-rls.ts",
     "verify:agents": "tsx scripts/verify-agents.ts",
