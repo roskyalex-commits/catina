@@ -4,8 +4,8 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `fd1cfc9` — either Claude or Gemini fills the ICP schema; `caen_label` repaired.
-- **Green:** 838 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding`.
+- **Last commit:** `cafe596` — the SIGNAL column shows signals; `dev:session` for looking at real data.
+- **Green:** 845 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
   decision-makers**, **1,559 harvested email addresses**, **248 companies
   scanned for signals**. `/app` renders **911 leads**; **35 carry a real
@@ -619,6 +619,22 @@ Out of scope until the above works: queue consumers, cron handlers, the
 unsubscribe endpoint, Copilot.
 
 ## Landmines
+
+- **A long ops script must write as it goes.** The ANAF financials pass
+  buffered every update and wrote once at the end; interrupted at 4,825 of
+  5,401 it wrote **nothing** — three hours of requests gone, and nothing for
+  `--missing-financials` to resume from. It now flushes every 50 companies.
+  Any script that runs for hours needs the same treatment, and the resume flag
+  has to key on a column the flush actually sets.
+- **A column named after a thing must show that thing.** The Contacts SIGNAL
+  column read `source_label`/`source_query` — the CAEN code a lead was *found*
+  by — for several releases, while the real signals sat one click down in the
+  score breakdown. Nobody noticed because it rendered something plausible. When
+  a surface and a feature share a name, check that they share a data source.
+- **The app has no demo mode once Supabase is configured**, so looking at real
+  data in a browser needs a session. `npm run dev:session` mints a throwaway
+  account and prints the cookie; `--cleanup` removes them. Sessions last an
+  hour — a bounce to `/login` means run it again, not that something broke.
 
 - **Deselecting an industry has to clear the free text too.** `industries` and
   `industryKeys` are two representations of one thing, and
