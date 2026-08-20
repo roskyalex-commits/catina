@@ -4,6 +4,7 @@ import {
   naceCodesFor,
   resolveIndustry,
 } from "./industries";
+import { normaliseIcpIndustries } from "./normalise-industries";
 import type { Icp } from "./schema";
 
 /**
@@ -194,10 +195,16 @@ function narrowBand(
 /**
  * Applies one accepted suggestion. Pure, and the only writer.
  *
- * Note what dropping an industry does to `caenCodes`: it recomputes them from
- * the industries that remain rather than subtracting the dropped industry's
- * codes. Subtracting would strip a code two industries share, quietly narrowing
- * an industry the user did not touch.
+ * Dropping an industry recomputes `caenCodes` from the industries that remain
+ * rather than subtracting the dropped one's codes — subtracting would strip a
+ * code two industries share and quietly narrow an industry nobody touched.
+ *
+ * That recomputation goes through `normaliseIcpIndustries` rather than calling
+ * `naceCodesFor` here, because the ceiling lives there. Deriving locally
+ * produced a **larger** list than before on a set that had been truncated:
+ * dropping wholesale from a 60-code ICP gave 77, which `icpSchema` rejects at
+ * `.max(60)`, so the wizard posted an agent the API refused. One derivation
+ * point, or the cap is only enforced on the paths that remember it.
  */
 export function applyRefinement(icp: Icp, refinement: Refinement): Icp {
   switch (refinement.kind) {
@@ -205,7 +212,7 @@ export function applyRefinement(icp: Icp, refinement: Refinement): Icp {
       const industryKeys = icp.industryKeys.filter(
         (key) => key !== refinement.industryKey,
       );
-      return {
+      return normaliseIcpIndustries({
         ...icp,
         industryKeys,
         /*
@@ -217,9 +224,7 @@ export function applyRefinement(icp: Icp, refinement: Refinement): Icp {
         industries: icp.industries.filter(
           (text) => resolveIndustry(text) !== refinement.industryKey,
         ),
-        // Overridden lists stay the user's; they took the codes over on purpose.
-        caenCodes: icp.caenCodesOverridden ? icp.caenCodes : naceCodesFor(industryKeys),
-      };
+      }).icp;
     }
     case "add_exclusion":
       return { ...icp, exclusions: [...icp.exclusions, refinement.term] };

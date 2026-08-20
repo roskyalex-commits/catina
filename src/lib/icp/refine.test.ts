@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { naceCodesFor } from "./industries";
 import { applyRefinement, refineIcpFromRejections, type RejectedLead } from "./refine";
+import { normaliseIcpIndustries } from "./normalise-industries";
 import { icpSchema, type Icp } from "./schema";
 
 /**
@@ -242,6 +243,41 @@ describe("applying a refinement", () => {
     const snapshot = JSON.parse(JSON.stringify(base));
     applyRefinement(base, { kind: "add_exclusion", term: "x", label: "", reason: "" });
     expect(base).toEqual(snapshot);
+  });
+
+  it("respects the code ceiling when dropping from a truncated ICP", () => {
+    /*
+     * Caught in the browser, not by a test. Six broad industries derive past
+     * the 60-code cap and get truncated to 60. Dropping one of them then
+     * recomputed from scratch and produced **77** — more codes than before, and
+     * past a ceiling `icpSchema` enforces at `.max(60)`, so the wizard posted an
+     * agent the API refused with a validation error.
+     */
+    const broad = icp({
+      industryKeys: [
+        "ecommerce",
+        "retail",
+        "wholesale",
+        "accounting_legal",
+        "financial_services",
+        "business_support",
+      ],
+      industries: [],
+    });
+    const normalised = normaliseIcpIndustries(broad).icp;
+    expect(normalised.caenCodes).toHaveLength(60);
+
+    const next = applyRefinement(normalised, {
+      kind: "drop_industry",
+      industryKey: "wholesale",
+      codes: naceCodesFor(["wholesale"]),
+      label: "",
+      reason: "",
+    });
+
+    expect(next.industryKeys).not.toContain("wholesale");
+    expect(next.caenCodes.length).toBeLessThanOrEqual(60);
+    expect(icpSchema.safeParse(next).success).toBe(true);
   });
 
   it("leaves the result valid against the schema", () => {
