@@ -18,6 +18,7 @@ const base = {
   companyTypes: ["smb" as const],
   countries: ["RO"],
   keywords: ["facturare", "e-factura"],
+  competitors: ["SmartBill", "Oblio"],
   exclusions: ["Enterprise ERP vendors"],
   employeeMin: 5,
   employeeMax: 250,
@@ -89,5 +90,35 @@ describe("normalise", () => {
 
   it("treats an empty productName as absent", () => {
     expect(normalise({ ...base, productName: "" }).productName).toBeUndefined();
+  });
+});
+
+describe("normalise — competitors", () => {
+  it("routes a competitor we can fingerprint into competitorTech", () => {
+    const icp = normalise({ ...base, competitors: ["HubSpot"] });
+    expect(icp.competitorTech).toEqual(["HubSpot"]);
+    expect(icp.competitorNames).toEqual([]);
+  });
+
+  it("stores it under our own display name whatever casing the model used", () => {
+    // `TECH_MARKERS` is keyed on display strings, so a lower-cased entry would
+    // sit in the column and never match anything the crawler detects.
+    expect(normalise({ ...base, competitors: ["hubspot"] }).competitorTech).toEqual([
+      "HubSpot",
+    ]);
+  });
+
+  it("degrades an undetectable competitor to a text match rather than dropping it", () => {
+    // Promising to spot a competitor and then silently not spotting it is worse
+    // than saying the detection is weaker.
+    const icp = normalise({ ...base, competitors: ["Oblio", "Shopify"] });
+    expect(icp.competitorTech).toEqual(["Shopify"]);
+    expect(icp.competitorNames).toEqual(["Oblio"]);
+  });
+
+  it("survives a model that returns no competitors at all", () => {
+    const icp = normalise({ ...base, competitors: [] });
+    expect(icp.competitorTech).toEqual([]);
+    expect(icp.competitorNames).toEqual([]);
   });
 });

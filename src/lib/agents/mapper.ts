@@ -60,6 +60,8 @@ export function agentInsertFrom(
     caen_codes: input.caenCodes,
     countries: input.countries,
     keywords: input.keywords,
+    competitor_tech: input.competitorTech,
+    competitor_names: input.competitorNames,
     exclusions: input.exclusions,
     employee_min: input.employeeMin,
     employee_max: input.employeeMax,
@@ -167,6 +169,8 @@ export function agentDetailFrom(
       caenCodes: stringArray(row.caen_codes),
       countries: stringArray(row.countries),
       targetTitles: stringArray(row.target_titles),
+      competitorTech: stringArray(row.competitor_tech),
+      competitorNames: stringArray(row.competitor_names),
       enabledSignals: stringArray(row.enabled_signals),
     },
     campaign: {

@@ -289,6 +289,7 @@ function stateFrom(
   );
 
   const pricingPage = snapshot?.pages.find((p) => /pricing|preturi|tarife/i.test(p.url));
+  const keywords = outcome?.signals.find((s) => s.type === "keyword_on_site");
 
   return {
     techStack: snapshot?.techStack ?? previous?.techStack ?? [],
@@ -306,6 +307,16 @@ function stateFrom(
     // itself and never fires.
     revenueRon: candidate.company.revenueRon,
     vatRegistered: candidate.company.vatRegistered,
+    /*
+     * Not a diff input — nothing compares keyword hits between scans. It is
+     * stored because it is the cheapest possible answer to "why did this
+     * company surface", and re-deriving it means re-fetching the site. The
+     * signal's payload holds the same thing, but signals age out and a scan row
+     * does not.
+     */
+    keywordHits: keywords?.payload
+      ? (keywords.payload as Record<string, unknown>)
+      : undefined,
   };
 }
 

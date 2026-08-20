@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { Globe, Radar, Target } from "lucide-react";
+import { Globe, Lock, Radar, Swords, Target } from "lucide-react";
 import { Card, Pill, SectionTitle } from "@/components/ui/primitives";
 import { getAgent } from "@/lib/data/agents";
 import { SIGNAL_SOURCE_CATALOGUE } from "@/lib/signals/scanner";
@@ -36,6 +36,16 @@ export default async function AgentSourcesPage({
           <ChipRow icon={Globe} label="Countries" values={agent.sources.countries} />
           <ChipRow icon={Target} label="Job titles" values={agent.sources.targetTitles} />
           <ChipRow icon={Radar} label="Keywords" values={agent.sources.keywords} />
+          <ChipRow
+            icon={Swords}
+            label="Competitors we can fingerprint"
+            values={agent.sources.competitorTech}
+          />
+          <ChipRow
+            icon={Swords}
+            label="Competitors matched as text"
+            values={agent.sources.competitorNames}
+          />
           <ChipRow
             icon={Target}
             label="CAEN codes"
@@ -114,15 +124,31 @@ function SourceList({
         <li key={source.key} className="py-3">
           <p className="flex flex-wrap items-center gap-2 text-[13px] font-medium">
             {source.label}
-            {enabled.has(source.key) ? (
+            {!source.available ? (
+              <Pill tone="neutral">
+                <Lock className="h-3 w-3" />
+                Not connected
+              </Pill>
+            ) : enabled.has(source.key) ? (
               <Pill tone="success" dot>
                 On
               </Pill>
             ) : (
               <Pill tone="neutral">Off</Pill>
             )}
+            {source.needsPreviousScan ? (
+              <Pill tone="neutral">Needs a second scan</Pill>
+            ) : null}
           </p>
           <p className="mt-0.5 text-[13px] text-muted">{source.description}</p>
+          {/*
+            An unavailable source states why rather than being hidden. Two of
+            the categories the competitor leads on have no free equivalent, and
+            a user comparing the two products deserves to read that here.
+          */}
+          {source.unavailableReason ? (
+            <p className="mt-1 text-[12px] text-muted">{source.unavailableReason}</p>
+          ) : null}
         </li>
       ))}
     </ul>

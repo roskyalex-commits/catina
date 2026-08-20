@@ -28,6 +28,8 @@ const icp: Icp = {
   companyTypes: ["smb"],
   countries: ["RO"],
   keywords: ["facturare"],
+  competitorTech: [],
+  competitorNames: [],
   exclusions: ["Competitor Ltd"],
   employeeMin: 10,
   employeeMax: 200,

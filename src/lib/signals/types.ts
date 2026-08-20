@@ -24,7 +24,15 @@ export type SignalType =
   | "tech_stack_added"
   | "tech_stack_removed"
   | "pricing_page_changed"
-  | "contact_job_change";
+  | "contact_job_change"
+  // --- needs-and-activity matching, not industry codes -------------------
+  | "keyword_on_site"
+  | "keyword_in_news"
+  | "competitor_tech"
+  | "competitor_mention"
+  // --- person-level, from a paid provider; see providers/person.ts -------
+  | "person_engaged_topic"
+  | "person_engaged_competitor";
 
 export type Signal = {
   type: SignalType;
@@ -119,6 +127,24 @@ export const SIGNAL_HALF_LIFE_DAYS: Record<SignalType, number> = {
   tech_stack_removed: 60,
   pricing_page_changed: 30,
   contact_job_change: 90,
+  /*
+   * A company's own positioning is the slowest-moving fact we hold. What a
+   * prospect says it does on its homepage is as true in four months as it is
+   * today, so decaying it like a job posting would throw away the one signal
+   * that fires on a first scan for every company with a reachable site.
+   */
+  keyword_on_site: 120,
+  keyword_in_news: 60,
+  /*
+   * "They run HubSpot" is a fact about a contract, and contracts are annual.
+   * The longest half-life of any web-derived signal, deliberately: a
+   * displacement opportunity does not expire in a month.
+   */
+  competitor_tech: 180,
+  competitor_mention: 90,
+  // Social engagement is the most perishable thing we can know about a person.
+  person_engaged_topic: 21,
+  person_engaged_competitor: 21,
 };
 
 /**

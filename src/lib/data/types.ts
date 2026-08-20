@@ -144,6 +144,9 @@ export type AgentDetail = AgentSummary & {
     caenCodes: string[];
     countries: string[];
     targetTitles: string[];
+    /** Competitors we can fingerprint, and the ones we can only read as text. */
+    competitorTech: string[];
+    competitorNames: string[];
     enabledSignals: string[];
   };
   campaign: {

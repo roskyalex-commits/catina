@@ -84,6 +84,8 @@ const DEMO_ICP: Icp = {
   companyTypes: ["smb", "ecommerce"],
   countries: ["RO", "BG", "HU"],
   keywords: ["facturare", "e-factura", "ERP", "contabilitate"],
+  competitorTech: ["SmartBill"],
+  competitorNames: ["Oblio", "FGO"],
   exclusions: ["staffing", "gambling"],
   employeeMin: 10,
   employeeMax: 250,
@@ -415,9 +417,18 @@ function buildAgent(input: {
       caenCodes: input.caenCodes,
       countries: input.countries,
       targetTitles: DEMO_ICP.targetTitles,
+      competitorTech: DEMO_ICP.competitorTech,
+      competitorNames: DEMO_ICP.competitorNames,
       // Keys from SIGNAL_SOURCE_CATALOGUE, not SignalType values — the Sources
       // tab lists catalogue entries, and the two vocabularies differ.
-      enabledSignals: ["anaf_growth", "anaf_status", "hiring", "tech_stack"],
+      enabledSignals: [
+        "keyword_site",
+        "competitor_tech",
+        "anaf_growth",
+        "anaf_status",
+        "hiring",
+        "tech_stack",
+      ],
     },
     campaign: {
       autoSend: false,

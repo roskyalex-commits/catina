@@ -30,6 +30,7 @@ import {
   type ScanRunDeps,
   type ScanTargeting,
 } from "../src/lib/pipeline/signal-scan";
+import { DETECTABLE_TECH } from "../src/lib/crawl/fetch-site";
 import type { RegistryCompany } from "../src/lib/pipeline/source-run";
 import { upsertSignals } from "../src/lib/signals/repository";
 import { selectSignalSources } from "../src/lib/signals/scanner";
@@ -48,7 +49,14 @@ type Options = {
   web: boolean;
   liveAnaf: boolean;
   agentId?: string;
+  /** Overrides the agent's own lists, for calibrating a source before saving it. */
+  keywords?: string[];
+  competitors?: string[];
 };
+
+function splitList(value: string): string[] {
+  return value.split(",").map((v) => v.trim()).filter(Boolean);
+}
 
 function parseArgs(argv: string[]): Options {
   const options: Options = { tier: "a", dryRun: false, web: true, liveAnaf: false };
@@ -77,6 +85,14 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--live-anaf":
         options.liveAnaf = true;
+        break;
+      // Calibration flags. Measuring a keyword list by first writing it to the
+      // agent means every bad guess is a change the user has to undo.
+      case "--keywords":
+        options.keywords = splitList(next());
+        break;
+      case "--competitors":
+        options.competitors = splitList(next());
         break;
       default:
         if (argv[i].startsWith("--")) throw new Error(`Unknown flag: ${argv[i]}`);
@@ -231,11 +247,15 @@ async function loadPrevious(
   return byCompany;
 }
 
+/** One literal, used for both branches below - see the PostgREST landmine in STATUS. */
+const AGENT_TARGETING_COLUMNS =
+  "id, target_titles, keywords, competitor_tech, competitor_names, enabled_signals";
+
 /** The agent's targeting, so hiring and keyword sources know what to look for. */
 async function loadTargeting(agentId?: string): Promise<ScanTargeting> {
   const query = db
     .from("agents")
-    .select("id, target_titles, keywords, enabled_signals")
+    .select(AGENT_TARGETING_COLUMNS)
     .eq("is_active", true)
     .order("created_at", { ascending: true })
     .limit(1);
@@ -243,7 +263,7 @@ async function loadTargeting(agentId?: string): Promise<ScanTargeting> {
   const { data, error } = agentId
     ? await db
         .from("agents")
-        .select("id, target_titles, keywords, enabled_signals")
+        .select(AGENT_TARGETING_COLUMNS)
         .eq("id", agentId)
         .maybeSingle()
     : await query.maybeSingle();
@@ -259,13 +279,33 @@ async function loadTargeting(agentId?: string): Promise<ScanTargeting> {
     ...emptyTargeting(),
     targetTitles: (row.target_titles as string[]) ?? [],
     keywords: (row.keywords as string[]) ?? [],
+    competitorTech: (row.competitor_tech as string[]) ?? [],
+    competitorNames: (row.competitor_names as string[]) ?? [],
     enabledSignals: (row.enabled_signals as string[]) ?? [],
   };
 }
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const targeting = await loadTargeting(options.agentId);
+  const stored = await loadTargeting(options.agentId);
+  /*
+   * A competitor named on the command line is split the same way the ICP
+   * splits one: anything `fingerprintTech` can detect becomes a fingerprint
+   * match, everything else falls back to prose. Doing it here rather than
+   * asking the operator to pick the right flag keeps one rule for both paths.
+   */
+  const detectable = new Map(DETECTABLE_TECH.map((t) => [t.toLowerCase(), t]));
+  const override = options.competitors;
+  const targeting: ScanTargeting = {
+    ...stored,
+    keywords: options.keywords ?? stored.keywords,
+    competitorTech: override
+      ? override.map((c) => detectable.get(c.toLowerCase())).filter((c): c is string => !!c)
+      : stored.competitorTech,
+    competitorNames: override
+      ? override.filter((c) => !detectable.has(c.toLowerCase()))
+      : stored.competitorNames,
+  };
   const companies = await loadCompanies(options);
 
   const previous = await loadPrevious(companies.map((c) => c.id));
@@ -278,6 +318,7 @@ async function main() {
       `fire yet, by design\n` +
       `targeting: ${targeting.targetTitles.length} titles, ` +
       `${targeting.keywords.length} keywords, ` +
+      `${targeting.competitorTech.length + targeting.competitorNames.length} competitors, ` +
       `${targeting.enabledSignals.length || "all"} sources\n`,
   );
   if (companies.length === 0) return;

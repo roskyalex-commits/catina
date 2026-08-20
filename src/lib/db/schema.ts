@@ -105,6 +105,18 @@ export const agents = pgTable(
     caenCodes: text("caen_codes").array().notNull().default([]),
     countries: text("countries").array().notNull().default(["RO"]),
     keywords: text("keywords").array().notNull().default([]),
+    /**
+     * Competing products to look for on a prospect's site.
+     *
+     * Split in two because the detections are not equally trustworthy:
+     * `competitorTech` holds names from `DETECTABLE_TECH` that
+     * `fingerprintTech` can confirm from markup, while `competitorNames` is
+     * everything else and can only be matched as prose. Collapsing them into
+     * one column would mean the UI cannot tell a user which of their
+     * competitors it can actually spot.
+     */
+    competitorTech: text("competitor_tech").array().notNull().default([]),
+    competitorNames: text("competitor_names").array().notNull().default([]),
     exclusions: text("exclusions").array().notNull().default([]),
 
     employeeMin: integer("employee_min"),

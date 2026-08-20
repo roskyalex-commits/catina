@@ -22,6 +22,13 @@
       "when": 1787182001705,
       "tag": "0002_narrow_deadpool",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787192213203,
+      "tag": "0003_stiff_nico_minoru",
+      "breakpoints": true
     }
   ]
 }

@@ -24,6 +24,7 @@
     "enrich:emails": "tsx scripts/enrich-emails.ts",
     "scan:signals": "tsx scripts/scan-signals.ts",
     "rescore:leads": "tsx scripts/rescore-leads.ts",
+    "measure:keyword-sourcing": "tsx scripts/measure-keyword-sourcing.ts",
     "verify:anaf": "tsx scripts/verify-anaf.ts",
     "verify:rls": "tsx scripts/verify-rls.ts",
     "verify:agents": "tsx scripts/verify-agents.ts",

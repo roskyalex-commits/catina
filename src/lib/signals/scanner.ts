@@ -8,9 +8,17 @@ import {
   AnafStatusSignalSource,
   NewRegistrationSignalSource,
 } from "./sources/anaf";
+import {
+  CompetitorMentionSignalSource,
+  CompetitorTechSignalSource,
+} from "./sources/competitor";
 import { HiringSignalSource } from "./sources/hiring";
+import { KeywordNewsSignalSource, KeywordSiteSignalSource } from "./sources/keywords";
 import { NewsSignalSource } from "./sources/news";
+import { PersonEngagementSignalSource } from "./sources/person-engagement";
 import { PricingPageSignalSource, TechStackSignalSource } from "./sources/website";
+import type { CreditLedger } from "@/lib/enrichment/ledger";
+import type { PersonSignalProvider } from "./providers/types";
 import type { Signal, SignalScanContext, SignalSource } from "./types";
 
 /**
@@ -148,6 +156,16 @@ export type SourceSelection = {
    * being the default.
    */
   anaf?: AnafClient;
+  /**
+   * Paid person-level providers. Empty today — see `providers/registry.ts`.
+   *
+   * Threaded through rather than constructed here so that connecting one is a
+   * change to the registry and to whoever owns the budget, and not a change to
+   * the scanner.
+   */
+  personProviders?: PersonSignalProvider[];
+  /** Budget for those providers. Absent means unmetered. */
+  ledger?: CreditLedger;
 };
 
 /**
@@ -165,12 +183,27 @@ export function selectSignalSources(selection: SourceSelection = {}): SignalSour
     : [new AnafGrowthFromRowSource(), new AnafStatusFromRowSource()];
 
   const all: SignalSource[] = [
+    /*
+     * Keyword and competitor sources lead, and not only for the picker's sake.
+     * Both read the snapshot the scan already fetched and fire on a *first*
+     * pass, while four of the seven below can produce nothing until a company
+     * has been scanned twice. Running them first means a scan that is cut short
+     * still produced the signals worth having.
+     */
+    new KeywordSiteSignalSource(),
+    new CompetitorTechSignalSource(),
+    new CompetitorMentionSignalSource(),
     ...registry,
     new NewRegistrationSignalSource(),
     new HiringSignalSource(),
     new NewsSignalSource("ro"),
+    new KeywordNewsSignalSource("ro"),
     new TechStackSignalSource(),
     new PricingPageSignalSource(),
+    new PersonEngagementSignalSource({
+      providers: selection.personProviders ?? [],
+      ledger: selection.ledger,
+    }),
   ];
 
   const enabled = selection.enabled;
@@ -178,60 +211,165 @@ export function selectSignalSources(selection: SourceSelection = {}): SignalSour
   return all.filter((source) => enabled.includes(source.key));
 }
 
-/** Descriptions for the signal picker, without needing a client to build them. */
-export const SIGNAL_SOURCE_CATALOGUE: {
+/**
+ * The signal picker's menu, grouped the way a seller thinks about it.
+ *
+ * Built as data rather than derived from the source classes, because two of the
+ * entries have no class to derive from: `person_engagement` has no provider
+ * connected, and rendering it as a disabled row with a reason is the point. A
+ * catalogue that only listed what currently works would quietly hide the two
+ * categories the competitor leads on.
+ *
+ * `available: false` means "we know exactly what this is and what it costs, and
+ * it is off". It is never a placeholder for something unbuilt.
+ */
+export type SignalCategory = "needs" | "competitors" | "company" | "registry" | "people";
+
+export const SIGNAL_CATEGORY_LABELS: Record<SignalCategory, string> = {
+  needs: "What they need",
+  competitors: "Who they already pay",
+  company: "What just changed",
+  registry: "Official filings",
+  people: "People",
+};
+
+export type SignalCatalogueEntry = {
   key: string;
   label: string;
   description: string;
+  category: SignalCategory;
   romaniaOnly: boolean;
-}[] = [
+  /** False renders a disabled row carrying `unavailableReason`. */
+  available: boolean;
+  unavailableReason?: string;
+  /**
+   * True when the source needs a second scan before it can ever fire.
+   *
+   * Worth surfacing: a user who enables only diff-gated signals and sees an
+   * empty first run has been failed by the UI, not by the data.
+   */
+  needsPreviousScan?: boolean;
+};
+
+export const SIGNAL_SOURCE_CATALOGUE: SignalCatalogueEntry[] = [
+  {
+    key: "keyword_site",
+    label: "Keywords on their website",
+    description:
+      "Matches the topics your buyers care about against what a company actually says it does. Fires on the first scan and links to the sentence it found.",
+    category: "needs",
+    romaniaOnly: false,
+    available: true,
+  },
+  {
+    key: "keyword_news",
+    label: "Keywords in the news",
+    description:
+      "Coverage that mentions a company alongside your topics — not just funding rounds. Free, no API key.",
+    category: "needs",
+    romaniaOnly: false,
+    available: true,
+  },
+  {
+    key: "competitor_tech",
+    label: "Uses a competing product",
+    description:
+      "Detects competitors you name running on a prospect's site today. A company already paying for the category is the shortest path to a sale.",
+    category: "competitors",
+    romaniaOnly: false,
+    available: true,
+  },
+  {
+    key: "competitor_mention",
+    label: "Mentions a competitor",
+    description:
+      "Finds competitors named in a prospect's own copy, for the ones that ship no detectable script. Weaker than a fingerprint — the snippet tells you why.",
+    category: "competitors",
+    romaniaOnly: false,
+    available: true,
+  },
   {
     key: "anaf_growth",
     label: "Revenue growth (ANAF filings)",
     description:
       "Year-over-year revenue change from official annual filings. Objective, free, and unavailable to international tools.",
+    category: "registry",
     romaniaOnly: true,
+    available: true,
   },
   {
     key: "anaf_status",
     label: "Registry status changes (VAT, insolvency)",
     description:
       "New VAT registration usually means a revenue threshold was crossed. The inactive-taxpayer list is the earliest public distress signal.",
+    category: "registry",
     romaniaOnly: true,
+    available: true,
   },
   {
     key: "onrc_new",
     label: "Newly registered companies",
     description:
       "Companies incorporated in the last few months — the moment founders choose the tools they'll keep for years.",
+    category: "registry",
     romaniaOnly: true,
+    available: true,
   },
   {
     key: "hiring",
     label: "Hiring activity",
     description:
       "Reads the company's own careers page. A company hiring has budget; a company hiring your buyer is about to have a new decision-maker.",
+    category: "company",
     romaniaOnly: false,
+    available: true,
   },
   {
     key: "news",
     label: "Funding and expansion news",
     description:
       "Watches Google News for funding rounds, acquisitions and expansion, in Romanian and English. Free, no API key.",
+    category: "company",
     romaniaOnly: false,
+    available: true,
   },
   {
     key: "tech_stack",
     label: "Technology changes",
     description:
       "Detects when a company adopts or drops a platform. Migrating stacks means budget is moving in that category right now.",
+    category: "company",
     romaniaOnly: false,
+    available: true,
+    needsPreviousScan: true,
   },
   {
     key: "pricing_page",
     label: "Pricing page changes",
     description:
       "Flags when a company changes its pricing or packaging — often the run-up to a bigger push.",
+    category: "company",
     romaniaOnly: false,
+    available: true,
+    needsPreviousScan: true,
+  },
+  {
+    key: "person_engagement",
+    label: "People engaging with your market",
+    description:
+      "Decision-makers who engaged publicly with content about your topics, or with a competitor's post.",
+    category: "people",
+    romaniaOnly: false,
+    available: false,
+    unavailableReason:
+      "Needs a paid LinkedIn data provider. No public, free, legal source " +
+      "publishes who engaged with a post — so this stays visibly off rather " +
+      "than being approximated. Everything behind it is built: connect a key " +
+      "in providers/registry.ts and it turns on.",
   },
 ];
+
+/** Keys a scan can actually run today. What the picker defaults to. */
+export const AVAILABLE_SIGNAL_KEYS: string[] = SIGNAL_SOURCE_CATALOGUE.filter(
+  (entry) => entry.available,
+).map((entry) => entry.key);

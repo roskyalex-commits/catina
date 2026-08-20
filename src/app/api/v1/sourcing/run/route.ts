@@ -146,7 +146,7 @@ export async function POST(request: Request) {
     const { data: agentRow, error: agentError } = await supabase
       .from("agents")
       .select(
-        "id, name, value_prop, product_name, target_titles, target_seniorities, industries, caen_codes, countries, keywords, exclusions, employee_min, employee_max, revenue_min_ron, revenue_max_ron, company_types, confidence",
+        "id, name, value_prop, product_name, target_titles, target_seniorities, industries, caen_codes, countries, keywords, competitor_tech, competitor_names, exclusions, employee_min, employee_max, revenue_min_ron, revenue_max_ron, company_types, confidence",
       )
       .eq("id", input.agentId)
       .maybeSingle();
@@ -170,6 +170,8 @@ export async function POST(request: Request) {
       companyTypes: stringArray(row.company_types),
       countries: stringArray(row.countries),
       keywords: stringArray(row.keywords),
+      competitorTech: stringArray(row.competitor_tech),
+      competitorNames: stringArray(row.competitor_names),
       exclusions: stringArray(row.exclusions),
       employeeMin: optionalNumber(row.employee_min),
       employeeMax: optionalNumber(row.employee_max),

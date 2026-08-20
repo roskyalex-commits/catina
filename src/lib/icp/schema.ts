@@ -45,6 +45,17 @@ export const icpSchema = z.object({
   /** ISO 3166-1 alpha-2. */
   countries: z.array(z.string().length(2)).max(30).default(["RO"]),
   keywords: z.array(z.string().min(2).max(60)).max(20).default([]),
+  /**
+   * Competing products we can fingerprint on a prospect's site.
+   *
+   * Constrained to `DETECTABLE_TECH` at the normalisation boundary rather than
+   * here, so a name we cannot detect degrades into `competitorNames` instead of
+   * failing the whole ICP. Promising to spot a competitor and then silently not
+   * spotting it is worse than saying the detection is weaker.
+   */
+  competitorTech: z.array(z.string().min(2).max(60)).max(15).default([]),
+  /** Competitor brands with no detectable marker — matched as text. */
+  competitorNames: z.array(z.string().min(2).max(80)).max(15).default([]),
   /** Segments to keep out: competitors, bad-fit verticals, existing customers. */
   exclusions: z.array(z.string().min(2).max(80)).max(20).default([]),
 
