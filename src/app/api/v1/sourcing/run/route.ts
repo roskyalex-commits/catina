@@ -279,22 +279,35 @@ export async function POST(request: Request) {
       cursor: input.cursor,
     });
 
+    /*
+     * Ids come back from the insert so the response can name the rows it
+     * created. The onboarding preview needs them to PATCH a verdict, and
+     * re-reading the leads afterwards would race with a concurrent run.
+     */
+    const idByCompany = new Map<string, string>();
     if (result.leads.length > 0) {
-      const { error: insertError } = await supabase.from("leads").insert(
-        result.leads.map((lead) => ({
-          org_id: orgId,
-          agent_id: input.agentId,
-          company_id: lead.companyId,
-          person_id: lead.personId,
-          score: lead.score,
-          score_breakdown: lead.breakdown,
-          compliance_region: lead.complianceRegion,
-          source_label: lead.sourceLabel,
-          source_query: lead.sourceQuery,
-          status: "new",
-        })),
-      );
+      const { data: inserted, error: insertError } = await supabase
+        .from("leads")
+        .insert(
+          result.leads.map((lead) => ({
+            org_id: orgId,
+            agent_id: input.agentId,
+            company_id: lead.companyId,
+            person_id: lead.personId,
+            score: lead.score,
+            score_breakdown: lead.breakdown,
+            compliance_region: lead.complianceRegion,
+            source_label: lead.sourceLabel,
+            source_query: lead.sourceQuery,
+            status: "new",
+          })),
+        )
+        .select("id, company_id");
       if (insertError) throw insertError;
+
+      for (const row of (inserted ?? []) as Record<string, unknown>[]) {
+        idByCompany.set(String(row.company_id), String(row.id));
+      }
     }
 
     // The activity feed reads job_runs, so a run that found nothing should
@@ -329,10 +342,16 @@ export async function POST(request: Request) {
       cursor: result.cursor,
       notes: result.notes,
       leads: result.leads.map((lead) => ({
+        id: idByCompany.get(lead.companyId) ?? null,
         company: lead.companyName,
         person: lead.personName,
+        title: lead.personTitle,
         score: lead.score,
         why: lead.sourceQuery,
+        caen: lead.caen,
+        employeeCount: lead.employeeCount,
+        city: lead.city,
+        signals: lead.signals,
       })),
     });
   } catch (error) {

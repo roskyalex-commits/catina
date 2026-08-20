@@ -30,6 +30,16 @@ export type PreparedLead = {
   /** Display only — the caller does not write these. */
   companyName: string;
   personName: string | null;
+  personTitle: string | null;
+  /*
+   * Carried for the onboarding preview, which has to show *why* a company was
+   * matched before the user has an agent page to look at. Re-reading them in
+   * the route would be a second query for rows this function already holds.
+   */
+  caen: string | null;
+  employeeCount: number | null;
+  city: string | null;
+  signals: { title: string; evidenceUrl?: string }[];
 };
 
 export type RegistryCompany = SourcedCompany & { id: string };
@@ -235,6 +245,15 @@ export async function sourceRun(
       sourceQuery: source.query,
       companyName: company.name,
       personName: person!.fullName,
+      personTitle: person!.title ?? null,
+      caen: company.caen ?? null,
+      employeeCount: company.employeeCount ?? company.employeesAnaf ?? null,
+      city: company.city ?? null,
+      // Capped: a preview card showing nine signals is a wall of text, and the
+      // strongest three are what the outreach copy would be built on anyway.
+      signals: (signalsByCompany.get(company.id) ?? [])
+        .slice(0, 3)
+        .map((signal) => ({ title: signal.title, evidenceUrl: signal.evidenceUrl })),
     });
   }
 

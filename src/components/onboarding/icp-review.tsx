@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { ChipInput } from "./chip-input";
+import { IndustryPicker } from "./industry-picker";
+import { normaliseIcpIndustries } from "@/lib/icp/normalise-industries";
 import type { AnalyzeResult } from "@/lib/icp/analyze";
 import {
   COMPANY_TYPE_LABELS,
@@ -28,6 +30,7 @@ export function IcpReview({
   onRestart: () => void;
 }) {
   const [icp, setIcp] = useState<Icp>(result.icp);
+
 
   function update<K extends keyof Icp>(key: K, value: Icp[K]) {
     setIcp((prev) => ({ ...prev, [key]: value }));
@@ -109,23 +112,26 @@ export function IcpReview({
           </div>
         </fieldset>
 
-        <ChipInput
-          label="Industries"
-          values={icp.industries}
-          onChange={(v) => update("industries", v)}
-          placeholder="E-commerce, Logistics…"
-        />
+        <IndustryPicker icp={icp} onChange={setIcp} />
 
-        <ChipInput
-          label="CAEN codes"
-          hint="Romanian activity codes. These query the national company registry directly — the sharpest filter available for Romanian leads."
-          values={icp.caenCodes}
-          onChange={(v) => update("caenCodes", v)}
-          placeholder="4791"
-          validate={(v) =>
-            /^\d{4}$/.test(v) ? null : "A CAEN code is exactly 4 digits."
-          }
-        />
+        {icp.industryKeys.length > 0 && (
+          <button
+            type="button"
+            onClick={() =>
+              setIcp(
+                normaliseIcpIndustries({
+                  ...icp,
+                  industryKeys: [],
+                  industries: [],
+                  caenCodesOverridden: false,
+                }).icp,
+              )
+            }
+            className="text-[13px] text-muted underline underline-offset-2 hover:text-foreground"
+          >
+            Skip industry filtering — match on size and location only
+          </button>
+        )}
 
         <ChipInput
           label="Markets"
@@ -177,13 +183,6 @@ export function IcpReview({
             </div>
           </div>
         )}
-
-        <ChipInput
-          label="Keywords"
-          values={icp.keywords}
-          onChange={(v) => update("keywords", v)}
-          placeholder="facturare, e-factura…"
-        />
 
         <ChipInput
           label="Exclude"

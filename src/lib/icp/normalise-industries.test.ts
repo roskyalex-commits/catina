@@ -63,6 +63,29 @@ describe("deriving codes", () => {
     expect(result.industryKeys).toEqual([]);
   });
 
+  it("re-adds a key whose free text is still present — the caller must clear both", () => {
+    /*
+     * Caught in a browser, not by a test: deselecting an industry in the picker
+     * did nothing at all. The key came off, `industries` still said
+     * "E-commerce", the very next normalise resolved it back, and the checkbox
+     * sprang on again.
+     *
+     * The behaviour pinned here is deliberate — free text resolving to a key is
+     * the whole mechanism — so the fix belongs in the callers, which now drop
+     * the matching phrase when they drop the key. This test exists so nobody
+     * "fixes" it here and breaks resolution instead.
+     */
+    const { icp: result } = normaliseIcpIndustries(
+      icp({ industryKeys: [], industries: ["E-commerce"] }),
+    );
+    expect(result.industryKeys).toEqual(["ecommerce"]);
+
+    const { icp: cleared } = normaliseIcpIndustries(
+      icp({ industryKeys: [], industries: [] }),
+    );
+    expect(cleared.industryKeys).toEqual([]);
+  });
+
   it("is idempotent", () => {
     const once = normaliseIcpIndustries(icp({ industries: ["Software"] })).icp;
     const twice = normaliseIcpIndustries(once).icp;
