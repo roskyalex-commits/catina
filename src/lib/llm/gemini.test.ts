@@ -173,9 +173,14 @@ describe("the request", () => {
       schema,
       schemaName: "t",
     });
+    /*
+     * Asserted as "a model name is present", not as a specific one. Pinning the
+     * default here made this test fail the day the default moved — which is
+     * noise: the bug is the empty segment, and that is what `models/:` catches.
+     */
     const [url] = fetchImpl.mock.calls[0] as unknown as [string];
-    expect(url).toContain("gemini-2.5-flash");
     expect(url).not.toContain("models/:");
+    expect(url).toMatch(/\/models\/gemini-[\w.-]+:generateContent$/);
   });
 
   it("uses the model it was given", async () => {
