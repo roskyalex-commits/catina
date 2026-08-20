@@ -4,9 +4,8 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `41323a9` — the ICP matches on needs and competitors rather
-  than on industry codes.
-- **Green:** 759 tests, clean `typecheck` and `lint`.
+- **Last commit:** `7ccdcdb` — industries are the vocabulary, NACE the derivation.
+- **Green:** 791 tests, clean `typecheck` and `lint`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
   decision-makers**, **1,559 harvested email addresses**, **248 companies
   scanned for signals**. `/app` renders **911 leads**; **35 carry a real
@@ -22,7 +21,7 @@ re-explained or re-derived. Update it when the answers change.
   moved **48 leads by an average of 13.3 points**.
 - **Current work: the ICP and the wizard around it.** Plan at
   `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`.
-  Phases 0, 1 and 2 are done; **Phase 3 (industries → NACE) is next**.
+  Phases 0–3 are done; **Phase 4 (the five-step wizard) is next**.
 
 ## The two constant zeros
 
@@ -155,6 +154,47 @@ Also learned the hard way: **Brave returns zero results for a TLD-only `site:`
 operator.** `"e-factura" firma site:.ro` came back empty while `"e-factura" firma`
 returned ten. The country restriction has to be applied on our side.
 
+## CAEN is four registers wearing one column
+
+`companies.caen` looks like a single vocabulary and is not. The ONRC nomenclator
+declares **four** CAEN revisions — 1998, 2003, 2008 (NACE Rev. 2) and 2025
+(NACE Rev. 2.1) — and two of them are live in our data at once, because ANAF
+files the 2008 codes and ONRC now lists the 2025 ones. Nothing records which
+revision a row came from.
+
+The 2025 revision renumbered heavily:
+
+| Activity | CAEN 2008 | CAEN 2025 |
+|---|---|---|
+| Custom software | `6201` | `6210` |
+| IT consultancy | `6202` + `6203` | `6220` (merged) |
+| Other IT services | `6209` | `6290` |
+| Data processing, hosting | `6311` | `6310` |
+| Web portals | `6312` | `6391` — which meant *news agencies* in 2008 |
+
+**2,263 rows carry `6201` and 2,714 carry `6210`. Same activity.** An industry
+that lists one and not the other silently halves its own reach, which is why
+`industry-definitions.ts` holds *prefixes* and `npm run build:industries`
+expands them against the nomenclator per revision. Measured against the live
+database, the model's hand-written software list missed **758 companies
+(+13.1%)** the derived one catches.
+
+**CAEN 2025 abolished the e-commerce class.** This is the finding to remember.
+`4791` meant "retail via mail order or the Internet" under CAEN 2008 — it *was*
+the code for an online shop, and 344 of our companies still carry it. NACE
+Rev. 2.1 stopped classifying sellers by *how* they sell, reassigned `4791` to
+"intermediation in non-specialised retail", and **introduced no replacement**.
+So "e-commerce" becomes progressively undiscoverable from the register, and the
+reliable way to find a webshop is the platform on its site — Shopify,
+WooCommerce, PrestaShop, Gomag and MerchantPro are all in `TECH_MARKERS`, and
+`competitor_tech` already reads them. Do not go looking for a 2025 code. There
+is not one.
+
+CAEN itself stays. It is still what the sourcing query filters on and still the
+axis no international tool has. What changed is where the codes come from: an
+enum of 37 industries the model picks from, expanded through the official
+nomenclator, instead of the model reciting four-digit numbers into a SQL `IN`.
+
 > If you are reading this in an unzipped export rather than a clone, there is no
 > git history in the folder and `npm install` has to run before anything else.
 
@@ -223,6 +263,11 @@ Ops scripts, in the order a fresh database needs them: `import:onrc` →
 `import:reps` → `enrich:registry` → `enrich:emails --companies` → `source` →
 `enrich:emails` → `scan:signals` → `rescore:leads`.
 
+`build:industries` is not part of that chain — it regenerates
+`src/lib/icp/nace-codes.generated.ts` from ONRC's `n_caen.csv` and only needs
+running when ONRC publishes a new export or an industry prefix changes. Use
+`--check` in CI to catch a stale generated file.
+
 `scan:signals` takes `--keywords` and `--competitors` to calibrate a list
 without first writing it to the agent, and `--all-sources` to opt into the two
 Google News sources it otherwise leaves off. `measure:keyword-sourcing` is a
@@ -274,6 +319,8 @@ Neither substitutes for the other, and the second still gates a real user.
 | `competitor_mention` | **Never fired** — no agent has named a competitor without a detectable marker. Untested, not disproven |
 | Keyword → company discovery via web search | **Verified as unusable here** — 82 hosts found, **2** joinable, and both were vendors not buyers |
 | Brave Search | **Verified live** — 59 queries spent. A TLD-only `site:` operator returns **zero** results |
+| Industry → CAEN derivation | **Verified against the live database** — the model's hand-written software list missed **758 companies (+13.1%)** the nomenclator-derived one catches |
+| CAEN 2025 abolished the e-commerce class | **Verified in the official nomenclator** — `4791` was reassigned and there is no replacement |
 | The seven original signal sources against real Romanian SMBs | **Verified as thin** — hiring 0/159, news 0/165, `keyword_news` 0/82. See the table above |
 | `company_scans` RLS | **Verified** — offline in `policies.test.ts`: any user reads, only the service role writes |
 | Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
@@ -528,13 +575,13 @@ has rows.
    and news — see "Where the signal actually was" above. Keyword→company
    *discovery* was measured and rejected; the script stays as the record.
 
-   **Phase 3 — industries → NACE. ← next.** `src/lib/icp/industries.ts`, ~30 industries
-   each mapping to the NACE codes that mean it. Makes `industries` load-bearing
-   (today it is inert — produced by Claude, edited in the wizard, read by
-   nothing) and `caenCodes` derived-but-overridable. Stop asking Claude for CAEN
-   codes; ask for an enum of industry keys instead.
+   ~~**Phase 3** — industries → NACE.~~ **Done** (`7ccdcdb`). 37 industries in
+   `industry-definitions.ts`, expanded to real classes by
+   `npm run build:industries` against the ONRC nomenclator. `industryKeys` is
+   load-bearing, `caenCodes` is derived-but-overridable, and Claude is no longer
+   asked for a code. See "CAEN is four registers wearing one column" above.
 
-   **Phase 4 — the wizard, five steps.** Sources / Signals / Target / Preview /
+   **Phase 4 — the wizard, five steps. ← next.** Sources / Signals / Target / Preview /
    Outreach, including the signal picker (**no UI has ever written
    `enabledSignals`**) and a lead preview with deterministic reject-to-refine.
 
@@ -592,15 +639,30 @@ unsubscribe endpoint, Copilot.
   request per company per year, the slow part). Running it for the 5,406
   companies with a domain is roughly 1.7 hours and would make the strongest
   Romania-only signal actually fire.
+- **Regenerate `nace-codes.generated.ts` whenever ONRC publishes a new export.**
+  `npm run build:industries -- --file n_caen.csv` rewrites it; `--check` fails if
+  the committed file is stale, which is what CI should run. The nomenclator is
+  not in the repo. A new CAEN revision would land silently otherwise, and the
+  first symptom would be an industry quietly halving its reach.
+- **Never derive CAEN codes in the query path.** `normaliseIcpIndustries` runs at
+  exactly two boundaries — after Claude produces an ICP, and when the wizard
+  posts one back. Deriving at query time would let a stored agent and a live
+  query disagree about what the agent targets, and the only way to find out
+  would be to run it.
+- **`caenCodesOverridden` is set on every pre-existing agent**, by the backfill in
+  `0004_premium_patriot.sql`. Their codes came from a model rather than from an
+  industry choice, and re-deriving would change what a working agent targets. A
+  user opts back into derivation by clearing the flag — nothing does it for them.
 - **`caen_label` is wrong for a large share of rows, and CAEN revisions are
   mixed.** `enrich-registry.ts:97` overwrites `caen` with ANAF's code and never
   touches `caen_label`, which `import-onrc.ts:505` set from ONRC's *authorised*
   activity. Measured: code `7311` (advertising agencies) carries six different
   labels including software ones, and **both `6201` and `6210` hold software
   companies** — ANAF files Rev. 2, ONRC lists Rev. 3. Consequences: never key
-  anything off `caen_label`, and an industry→code table must list every code
-  meaning that activity in **every revision in use** (the existing agent hedges
-  this by accident with `6201,6202,6203,6209,6210`).
+  anything off `caen_label`. The industry→code half of this is now handled —
+  `build-industries.ts` expands prefixes against every live revision — but the
+  label column itself is still wrong and still un-repaired. Recompute it from
+  `caen` after enrichment, or null it.
 - **`signals_dedupe_idx` is UNIQUE on `dedupe_key` globally, not per company.**
   The news source keys only on the article guid, so one article naming two
   companies would have the second write steal the first company's row — silently.
