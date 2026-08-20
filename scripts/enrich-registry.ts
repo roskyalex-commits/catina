@@ -36,12 +36,18 @@ type Options = {
   refresh: boolean;
   skipFinancials: boolean;
   year: number;
+  /** Only companies we can also crawl — the ones a web scan will ever see. */
+  hasWebsite: boolean;
+  /** Only companies still missing a filing pair. Makes a long run resumable. */
+  missingFinancials: boolean;
 };
 
 function parseArgs(argv: string[]): Options {
   const options: Options = {
     refresh: false,
     skipFinancials: false,
+    hasWebsite: false,
+    missingFinancials: false,
     // Filings lag by roughly a year; last year is the newest likely to exist.
     year: new Date().getUTCFullYear() - 1,
   };
@@ -58,6 +64,20 @@ function parseArgs(argv: string[]): Options {
         options.year = Number(next());
         break;
       case "--refresh":
+        options.refresh = true;
+        break;
+      /*
+       * The financials pass is one request per company per year and ANAF
+       * serialises at ~1.1s, so the whole register is a day of wall clock.
+       * These two flags are what make it a bounded job instead: 5,406 companies
+       * with a website are the only ones a web scan will ever look at, and
+       * skipping the ones already done means an interrupted run resumes.
+       */
+      case "--has-website":
+        options.hasWebsite = true;
+        break;
+      case "--missing-financials":
+        options.missingFinancials = true;
         options.refresh = true;
         break;
       case "--skip-financials":
@@ -132,14 +152,30 @@ async function main() {
       : PAGE;
     if (wanted <= 0) break;
 
+    /*
+     * Typed loosely on purpose. Five conditional `.eq`/`.is`/`.not` calls on
+     * one builder push PostgREST's generic inference past its depth limit
+     * ("Type instantiation is excessively deep"), and the generated `Database`
+     * type is still a placeholder here anyway, so the chain buys no real
+     * safety. The row shape is asserted on the way out instead.
+     */
     let query = supabase
       .from("companies")
       .select("id, cui, name")
       .not("cui", "is", null)
       .order("created_at", { ascending: true })
-      .range(from, from + wanted - 1);
+      .range(from, from + wanted - 1) as unknown as {
+      eq(column: string, value: unknown): typeof query;
+      is(column: string, value: unknown): typeof query;
+      not(column: string, operator: string, value: unknown): typeof query;
+      then: PromiseLike<{ data: unknown; error: { message: string } | null }>["then"];
+    };
 
     if (options.county) query = query.eq("county", options.county);
+    if (options.hasWebsite) query = query.not("domain", "is", null);
+    // `revenue_prev_ron` rather than `revenue_ron`: the growth signal needs
+    // both years, so a company with only the current one is not done.
+    if (options.missingFinancials) query = query.is("revenue_prev_ron", null);
     // Without --refresh, only companies never enriched. Makes the script
     // resumable: interrupt it, run it again, it picks up where it stopped.
     if (!options.refresh) query = query.is("last_enriched_at", null);
@@ -168,7 +204,7 @@ async function main() {
       `\n  VAT/status: ${batches} request(s) at ~1/s` +
       (options.skipFinancials
         ? "\n  financials: skipped"
-        : `\n  financials: ${rows.length} request(s) for ${options.year}, ~${Math.ceil(rows.length / 55)} min`) +
+        : `\n  financials: ${rows.length * 2} request(s) — ${options.year} and ${options.year - 1}, both needed for growth — ~${Math.ceil((rows.length * 2 * 1.1) / 60)} min`) +
       "\n",
   );
 
