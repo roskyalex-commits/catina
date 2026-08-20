@@ -1,5 +1,10 @@
 import type { ScoreBreakdown } from "@/lib/signals/scoring";
 import {
+  NEGATIVE_SIGNALS,
+  recencyMultiplier,
+  type Signal,
+} from "@/lib/signals/types";
+import {
   optionalDate,
   optionalNumber,
   optionalString,
@@ -53,13 +58,35 @@ function sourceLabel(value: unknown): SourceLabel {
 }
 
 /**
- * The chip under a lead's name, explaining why it was sourced.
+ * The chip under a lead's name.
  *
- * Built from what the sourcing run recorded rather than re-derived: the run
- * knew whether a CAEN code or a keyword matched, and re-deciding here could
- * disagree with the row's own `source_label`.
+ * A **buying signal** when the company has one, and the sourcing provenance
+ * only when it does not.
+ *
+ * That order is the whole point of the column, and it used to be the other way
+ * round by omission: this read `source_label`/`source_query` and nothing else,
+ * so every row said "Matched CAEN 6201" — the code the lead was *found* by —
+ * while "Runs WooCommerce today" sat one click away in the score breakdown.
+ * A column named SIGNAL showing an industry code is the exact complaint the
+ * signals work exists to answer.
+ *
+ * Provenance is kept as the fallback rather than dropped. "Matched CAEN 6201"
+ * is a poor signal but an honest answer to "why is this person on my list",
+ * and 855 of 919 leads have no signal yet.
  */
-function contactSignal(row: Record<string, unknown>): ContactSignal | null {
+function contactSignal(
+  row: Record<string, unknown>,
+  signals: readonly Signal[] = [],
+): ContactSignal | null {
+  const strongest = strongestSignal(signals);
+  if (strongest) {
+    return {
+      title: strongest.title,
+      evidenceUrl: strongest.evidenceUrl,
+      kind: "signal",
+    };
+  }
+
   const query = optionalString(row.source_query);
   const kind = sourceLabel(row.source_label);
 
@@ -79,13 +106,39 @@ function contactSignal(row: Record<string, unknown>): ContactSignal | null {
 }
 
 /**
+ * The one signal worth showing in a single line.
+ *
+ * Decayed strength, not raw: a nine-month-old funding round should not outrank
+ * a competitor detected last week, and `recencyMultiplier` is the same
+ * half-life curve the score itself uses — so the chip and the number can never
+ * disagree about which signal mattered most.
+ *
+ * Distress signals are excluded. They are real and they belong in the
+ * breakdown, but a row whose headline reads "Insolvency proceedings on record"
+ * is not a lead the user is being invited to act on.
+ */
+function strongestSignal(signals: readonly Signal[]): Signal | undefined {
+  const now = new Date();
+  return [...signals]
+    .filter((signal) => !NEGATIVE_SIGNALS.has(signal.type))
+    .sort(
+      (a, b) =>
+        b.strength * recencyMultiplier(b.type, b.detectedAt, now) -
+        a.strength * recencyMultiplier(a.type, a.detectedAt, now),
+    )[0];
+}
+
+/**
  * Map a joined lead row.
  *
  * Absent data stays absent: a lead with no email yet gets `null`, not a
  * fabricated address. About 1% of registry companies carry a domain, so this is
  * the common case rather than an edge one, and the UI is built to show it.
  */
-export function contactRowFrom(row: Record<string, unknown>): ContactRow {
+export function contactRowFrom(
+  row: Record<string, unknown>,
+  signals: readonly Signal[] = [],
+): ContactRow {
   const person = embedded(row.people);
   const company = embedded(row.companies);
   const email = embedded(row.emails);
@@ -103,7 +156,7 @@ export function contactRowFrom(row: Record<string, unknown>): ContactRow {
     country: optionalString(company?.country),
     county: optionalString(company?.county),
     caen: optionalString(company?.caen),
-    signal: contactSignal(row),
+    signal: contactSignal(row, signals),
     score,
     flames: flamesFor(score),
     // The breakdown is written by the scoring engine as jsonb and read back

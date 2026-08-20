@@ -23,12 +23,26 @@
  * per year, which is the slow part — hence `--skip-financials` for a quick
  * first pass.
  */
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { AnafClient, type AnafCompany } from "../src/lib/sources/anaf/client";
 import { requireEnv } from "./load-env";
 
 const VAT_BATCH = 100;
 const WRITE_BATCH = 200;
+/**
+ * Companies between writes during the financials pass.
+ *
+ * The pass used to buffer every update and write once at the end. A run over
+ * the 5,401 companies with a website takes about three hours, and being
+ * interrupted at 4,825 of them wrote **nothing** — three hours of ANAF requests
+ * thrown away, with no partial credit and nothing for `--missing-financials` to
+ * resume from.
+ *
+ * 50 companies is roughly two minutes of work at ANAF's rate: small enough that
+ * an interruption costs almost nothing, large enough that the writes stay
+ * batched rather than one round-trip per company.
+ */
+const FLUSH_EVERY = 50;
 
 type Options = {
   limit?: number;
@@ -127,6 +141,33 @@ function updateFromCompany(id: string, company: AnafCompany): Update {
   };
 }
 
+/**
+ * Persist and forget the pending updates.
+ *
+ * Returns how many rows it wrote so the caller can keep a running total, and
+ * empties the map — anything still in it after this is work done since.
+ */
+async function flush(
+  supabase: SupabaseClient,
+  updates: Map<string, Update>,
+): Promise<number> {
+  const list = [...updates.values()];
+  if (list.length === 0) return 0;
+  updates.clear();
+
+  for (let i = 0; i < list.length; i += WRITE_BATCH) {
+    const batch = list.slice(i, i + WRITE_BATCH);
+    const results = await Promise.all(
+      batch.map(({ id, ...fields }) =>
+        supabase.from("companies").update(fields).eq("id", id),
+      ),
+    );
+    const failed = results.find((result) => result.error);
+    if (failed?.error) throw new Error(`Write failed: ${failed.error.message}`);
+  }
+  return list.length;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
@@ -210,6 +251,8 @@ async function main() {
 
   const byCui = new Map(rows.map((row) => [row.cui, row]));
   const updates = new Map<string, Update>();
+  /** Rows already persisted by an intermediate flush. */
+  let flushed = 0;
   let notFound = 0;
 
   // --- pass 1: VAT, status, real CAEN ---------------------------------------
@@ -267,17 +310,33 @@ async function main() {
       } catch {
         // A single unfiled or unreadable year should not stop the run.
       }
+      /*
+       * Write as we go, and drop what was written.
+       *
+       * `updates` is a map keyed by company id, so flushing and clearing is
+       * safe: the VAT pass's entry for a company is merged into the same object
+       * before it ever reaches here, and no later iteration revisits a row.
+       */
+      if (done % FLUSH_EVERY === 0) {
+        flushed += await flush(supabase, updates);
+      }
       if (done % 25 === 0 || done === rows.length) {
-        process.stdout.write(`\r  financials: ${done}/${rows.length}`);
+        process.stdout.write(
+          `\r  financials: ${done}/${rows.length} (${flushed} written)`,
+        );
       }
     }
     console.log(`\n  ${withRevenue} companies with a ${options.year} revenue figure\n`);
   }
 
-  // --- write ----------------------------------------------------------------
+  // --- write whatever the last flush did not take ---------------------------
   const list = [...updates.values()];
   if (list.length === 0) {
-    console.log("Nothing matched at ANAF — nothing written.");
+    console.log(
+      flushed === 0
+        ? "Nothing matched at ANAF — nothing written."
+        : `\n✓ Enriched ${flushed} companies`,
+    );
     return;
   }
 
@@ -294,14 +353,16 @@ async function main() {
     const failed = results.find((result) => result.error);
     if (failed?.error) {
       console.error(`\nWrite failed: ${failed.error.message}`);
-      console.error(`Wrote ${written} before failing. Re-running resumes safely.`);
+      console.error(`Wrote ${flushed + written} before failing. Re-running resumes safely.`);
       process.exit(1);
     }
     written += batch.length;
     process.stdout.write(`\r  writing: ${written}/${list.length}`);
   }
 
-  console.log(`\n✓ Enriched ${written} companies`);
+  // `flushed` plus the tail. Reporting only the tail made a run that wrote
+  // 5,401 rows announce that it had enriched 51 of them.
+  console.log(`\n✓ Enriched ${flushed + written} companies`);
 }
 
 main().catch((error) => {

@@ -3,6 +3,7 @@ import { Building2, Globe, Lock, Radar, Swords, Target } from "lucide-react";
 import { industryByKey, naceLabel } from "@/lib/icp/industries";
 import { Card, Pill, SectionTitle } from "@/components/ui/primitives";
 import { getAgent } from "@/lib/data/agents";
+import { DEFAULT_ENABLED_SIGNALS } from "@/lib/agents/schema";
 import { SIGNAL_SOURCE_CATALOGUE } from "@/lib/signals/scanner";
 
 /**
@@ -22,7 +23,22 @@ export default async function AgentSourcesPage({
   const agent = await getAgent(id);
   if (!agent) notFound();
 
-  const enabled = new Set(agent.sources.enabledSignals);
+  /*
+   * An empty `enabled_signals` means "run the default set", not "run nothing".
+   *
+   * `selectSignalSources` has always read an empty list as *every* source, and
+   * `scan-signals.ts` narrows that to `DEFAULT_ENABLED_SIGNALS`. This page did
+   * neither — it rendered the raw column, so an agent that had never been
+   * through the picker showed every signal as "Off" while the scanner was
+   * happily running them. Telling a user the opposite of what the system does
+   * is worse than telling them nothing.
+   *
+   * The banner below says which case they are in, because "on by default" and
+   * "on because you chose it" are different facts.
+   */
+  const chosen = agent.sources.enabledSignals;
+  const usingDefaults = chosen.length === 0;
+  const enabled = new Set(usingDefaults ? DEFAULT_ENABLED_SIGNALS : chosen);
   const romanian = SIGNAL_SOURCE_CATALOGUE.filter((s) => s.romaniaOnly);
   const universal = SIGNAL_SOURCE_CATALOGUE.filter((s) => !s.romaniaOnly);
 
@@ -86,6 +102,17 @@ export default async function AgentSourcesPage({
       </Card>
 
       <div className="space-y-5">
+        {usingDefaults && (
+          <Card className="p-4">
+            <p className="text-[13px]">
+              <span className="font-medium">Running the default signals.</span>{" "}
+              This agent has never been through the signal picker, so it watches
+              the free sources that fire without a previous scan. Re-run
+              onboarding to choose for yourself.
+            </p>
+          </Card>
+        )}
+
         <Card className="p-5">
           <SectionTitle
             title="Romanian registry"

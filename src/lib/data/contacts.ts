@@ -1,3 +1,5 @@
+import { findSignalsFor } from "@/lib/signals/repository";
+import { optionalString } from "@/lib/supabase/row";
 import { getSessionContext } from "@/lib/supabase/server";
 import { demoDataset, isDemoMode } from "./demo";
 import { contactRowFrom } from "./rows";
@@ -29,7 +31,7 @@ export type ContactPage = {
  * `GenericStringError`.
  */
 export const LEAD_COLUMNS =
-  "id, score, score_breakdown, source_label, source_query, fit_feedback, agent_id, created_at, people(full_name, title), companies(name, domain, country, county, caen), emails(address, status, confidence, is_role_address), lists(id, name)";
+  "id, company_id, score, score_breakdown, source_label, source_query, fit_feedback, agent_id, created_at, people(full_name, title), companies(name, domain, country, county, caen), emails(address, status, confidence, is_role_address), lists(id, name)";
 
 /**
  * Filtering runs here rather than in the page so that the same predicate serves
@@ -93,8 +95,29 @@ export async function listContacts(
     return { rows: [], total: 0, page, perPage };
   }
 
-  const rows = (data ?? []).map((row) =>
-    contactRowFrom(row as Record<string, unknown>),
+  /*
+   * Signals for this page only, in one batched read.
+   *
+   * `signals` is shared reference data readable by any authenticated user, so
+   * the caller's own client is enough — no service role, and RLS still decides
+   * which *leads* were returned above.
+   *
+   * Not an embedded PostgREST join: `signals` has no foreign key from `leads`,
+   * only from `companies`, and a nested select would fetch every signal a
+   * company ever had for every row. `findSignalsFor` chunks the ids and pages
+   * past the silent 1,000-row cap, which is the part that bites at 100 rows a
+   * page with several signals each.
+   */
+  const raw = (data ?? []) as Record<string, unknown>[];
+  const signalsByCompany = await findSignalsFor(
+    session.supabase,
+    raw
+      .map((row) => optionalString(row.company_id))
+      .filter((id): id is string => Boolean(id)),
+  );
+
+  const rows = raw.map((row) =>
+    contactRowFrom(row, signalsByCompany.get(optionalString(row.company_id) ?? "") ?? []),
   );
 
   // Text search and list membership still run in memory: the first needs a
