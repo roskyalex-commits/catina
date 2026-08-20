@@ -4,8 +4,8 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `b54abea` — the five-step wizard; `enabledSignals` is finally written by a UI.
-- **Green:** 810 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding`.
+- **Last commit:** `fd1cfc9` — either Claude or Gemini fills the ICP schema; `caen_label` repaired.
+- **Green:** 838 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
   decision-makers**, **1,559 harvested email addresses**, **248 companies
   scanned for signals**. `/app` renders **911 leads**; **35 carry a real
@@ -19,6 +19,10 @@ re-explained or re-derived. Update it when the answers change.
   over the 82 companies whose site was actually read: `keyword_on_site` **41.5%**,
   `competitor_tech` **19.5%** — against **0%** for hiring and news. Rescoring
   moved **48 leads by an average of 13.3 points**.
+- **The model key is no longer a single point of failure.** `ANTHROPIC_API_KEY`
+  *or* `GEMINI_API_KEY` fills the ICP schema — Gemini has a free tier, so the
+  first screen works without paying anyone. `npm run verify:llm` says whether a
+  key works before you go looking at the crawler.
 - **Current work: the ICP and the wizard around it.** Plan at
   `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`.
   Phases 0–4 are done; **Phase 5 is mostly done early** — what is left is
@@ -264,6 +268,11 @@ Ops scripts, in the order a fresh database needs them: `import:onrc` →
 `import:reps` → `enrich:registry` → `enrich:emails --companies` → `source` →
 `enrich:emails` → `scan:signals` → `rescore:leads`.
 
+`repair:caen-labels` belongs immediately after every `enrich:registry` run:
+enrichment rewrites `caen` and leaves `caen_label` describing the old
+activity. `verify:llm` needs nothing but a model key and answers whether
+that key works.
+
 `build:industries` is not part of that chain — it regenerates
 `src/lib/icp/nace-codes.generated.ts` from ONRC's `n_caen.csv` and only needs
 running when ONRC publishes a new export or an industry prefix changes. Use
@@ -321,6 +330,9 @@ Neither substitutes for the other, and the second still gates a real user.
 | Keyword → company discovery via web search | **Verified as unusable here** — 82 hosts found, **2** joinable, and both were vendors not buyers |
 | The onboarding wizard's four routes | **Verified against a live database** — `verify:onboarding`, 22 checks including the plan cap on a second preview run |
 | The signal picker, industry picker and preview | **Verified in a browser** — five-step header, 37 industries with live code counts, derived codes updating on toggle |
+| Either model key works | **Verified as far as it can be** — 28 offline tests over the Gemini adapter and the schema converter; the live call is unverified because neither key is set |
+| `caen_label` repair | **Verified against the live database** — 6,369 of 17,156 rows fixed, second pass finds 0 |
+| Widening the agent to derived codes | **Verified** — +758 companies, +11 contactable, **+8 leads** after re-sourcing |
 | Brave Search | **Verified live** — 59 queries spent. A TLD-only `site:` operator returns **zero** results |
 | Industry → CAEN derivation | **Verified against the live database** — the model's hand-written software list missed **758 companies (+13.1%)** the nomenclator-derived one catches |
 | CAEN 2025 abolished the e-commerce class | **Verified in the official nomenclator** — `4791` was reassigned and there is no replacement |
@@ -652,7 +664,15 @@ unsubscribe endpoint, Copilot.
   web-source rate in this document is a rate over the half we can read, and the
   cheapest way to double any of them is to make more sites readable, not to add
   another source.
-- **The ANAF financials pass was never run.** Only **29 of 17,156** companies
+- ~~**The ANAF financials pass was never run.**~~ **Running** (`1928fc0`):
+  `npm run enrich:registry -- --has-website --missing-financials` covers the
+  5,401 companies a web scan will ever look at. It is 2 requests per company
+  (both years, because growth needs a pair) at ANAF's ~1.1s, so roughly 3.3
+  hours — and resumable, which is what `--missing-financials` is for.
+  Re-run `scan:signals` and `rescore:leads` afterwards to turn the filings
+  into `anaf_growth` signals. **Then re-run `repair:caen-labels`**, because
+  enrichment rewrites `caen` and leaves the label stale again.
+  *Original note:* **The ANAF financials pass was never run.** Only **29 of 17,156** companies
   have both `revenue_ron` and `revenue_prev_ron`, so `anaf_growth` — the signal
   no international tool can match — has almost nothing to work with.
   `enrich-registry.ts` did the VAT pass and skipped financials (they are one
@@ -673,7 +693,15 @@ unsubscribe endpoint, Copilot.
   `0004_premium_patriot.sql`. Their codes came from a model rather than from an
   industry choice, and re-deriving would change what a working agent targets. A
   user opts back into derivation by clearing the flag — nothing does it for them.
-- **`caen_label` is wrong for a large share of rows, and CAEN revisions are
+- ~~**`caen_label` is wrong for a large share of rows.**~~ **Repaired**
+  (`fd1cfc9`): **6,369 of 17,156 rows — 37% — described the wrong activity**,
+  almost always "custom software development", because the first import
+  filtered on division 62 and set the label from ONRC's *authorised* activity
+  before enrichment replaced `caen` with what ANAF says the company files
+  under. `npm run repair:caen-labels -- --file n_caen.csv` fixes it and is
+  idempotent. **Re-run it after every `enrich:registry` pass** — the two scripts
+  still disagree, and this repairs the result rather than the cause.
+  The rest of that landmine stands: **CAEN revisions are
   mixed.** `enrich-registry.ts:97` overwrites `caen` with ANAF's code and never
   touches `caen_label`, which `import-onrc.ts:505` set from ONRC's *authorised*
   activity. Measured: code `7311` (advertising agencies) carries six different
