@@ -4,16 +4,22 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `cf48f68` — leads carry real email addresses.
-- **Green:** 675 tests, clean `typecheck` and `lint`.
-- **Steps 1–5a are done and visible.** The database holds **17,156 companies**
-  (5,406 with a website), **29,551 decision-makers** and **1,559 harvested
-  email addresses**. `/app` renders **911 leads**, of which **35 carry a real
-  address** and score 54 rather than the old flat 45.
-- **The domain bottleneck was solved by reading the file properly, not by an
-  API.** See the next section — it is the most useful thing in this document.
+- **Last commit:** `f23b4e3` — the signal scanner is wired; signals stopped
+  being 35% of a constant zero.
+- **Green:** 710 tests, clean `typecheck` and `lint`.
+- **Data:** **17,156 companies** (5,406 with a website), **29,551
+  decision-makers**, **1,559 harvested email addresses**, **165 companies
+  scanned for signals**. `/app` renders **911 leads**; **35 carry a real
+  address**, and the best now scores **63** rather than the old flat 45.
+- **Two structural gaps are closed.** Contactability (20% of the score) and
+  signals (35%) both used to contribute exactly zero. Both now work. Read
+  "The two constant zeros" below before anything else.
+- **Current work: making the ICP mean what a user means by it** — matching on
+  needs, keywords and competitor usage rather than CAEN codes. Plan at
+  `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`.
+  Phase 0 and Phase 1 are done; Phase 2 is next.
 
-## The 45-point ceiling, and how it was lifted
+## The two constant zeros
 
 Every lead used to score exactly 45, and it was not a coincidence — it was a
 ceiling. `scoreLead` weights ICP fit 0.45, signals 0.35, contactability 0.20.
@@ -55,6 +61,35 @@ needs either a vendor (step 5c) or mailbox verification (step 5d).
 **What still limits it.** 5,406 companies have a domain out of 17,156, and the
 agent's CAEN filter narrows that to 199. Widening the ICP, or importing more of
 the register, moves the number far more than any enrichment work will.
+
+### The second zero: signals, 35% of the score
+
+The same failure, one component over and three times the weight. `SignalScanner`,
+seven implemented sources and the `signals` table were complete and **had no
+caller** — `sourceRun`'s `findSignals` dep was never supplied, so every real lead
+scored signals = 0. That is why the flat scores were *exactly* 45 and *exactly* 54.
+
+The loop now closes: `npm run scan:signals` → `signals` → `npm run rescore:leads`.
+First run moved 8 leads and produced the first score to break the pattern, **63**,
+on a lead carrying both an email and a signal.
+
+**What the first run actually found, and it matters:**
+
+| Source | Ran on | Signals |
+|---|---|---|
+| `hiring` | 159 | **0** — a five-person SRL has no careers page |
+| `news` | 165 | **0** — Google News does not cover small Romanian companies |
+| `onrc_new` | 165 | 3 |
+| `anaf_growth` | 1 | 1 |
+| `tech_stack`, `pricing_page` | 0 | skipped — need a previous scan to diff |
+
+So the sources that exist produce **almost nothing for Romanian SMBs**. The ones
+that will are `competitor_tech` and `keyword_on_site` (Phase 2 of the plan): both
+fire on a *first* scan with no diff, and both read the snapshot the scan already
+fetched, so they cost no extra request. They are also the two that answer the
+actual complaint — matching on what a company **uses and talks about** rather
+than on its CAEN code.
+
 > If you are reading this in an unzipped export rather than a clone, there is no
 > git history in the folder and `npm install` has to run before anything else.
 
@@ -119,6 +154,10 @@ The other `verify:*` scripts each drive one route against the running app with
 a throwaway tenant and delete it afterwards. Run them after touching the thing
 they cover: `verify:agents`, `verify:sourcing`, `verify:emails`.
 
+Ops scripts, in the order a fresh database needs them: `import:onrc` →
+`import:reps` → `enrich:registry` → `enrich:emails --companies` → `source` →
+`enrich:emails` → `scan:signals` → `rescore:leads`.
+
 `verify:rls` creates two workspaces and asserts one cannot read the other. It
 is not optional — an un-policied tenant table is a cross-org data leak.
 
@@ -158,6 +197,9 @@ Neither substitutes for the other, and the second still gates a real user.
 | `POST /api/v1/leads/[id]/enrich` | **Verified** — `npm run verify:emails`, 22 checks: RLS, 404s, re-run does not duplicate, score 45 → 54 |
 | The contacts table with an address | **Verified in a browser** — status pill, "role address" label, both Enrich buttons, no overflow at 1280 or 375px |
 | Domain discovery by name-guessing | **Verified as ineffective** — 0 of 55 on the live run, and the reason is structural |
+| Signal scan → `signals` → rescore | **Verified** — `npm run scan:signals`, 165 companies, 4 signals, 8 leads rescored, one to 63 |
+| The seven signal sources against real Romanian SMBs | **Verified as thin** — hiring 0/159, news 0/165. See the table above |
+| `company_scans` RLS | **Verified** — offline in `policies.test.ts`: any user reads, only the service role writes |
 | Brave Search / domain-search | **From documentation, never run.** Needs `BRAVE_SEARCH_API_KEY`; `BraveSearch.probe()` prints the raw payload |
 | Hunter / Prospeo / PDL shapes | **From documentation.** Hunter is the most confident, Prospeo the least |
 | Claude ICP inference end to end | **Never run** with a real key |
@@ -357,7 +399,50 @@ has rows.
    outbound port 25, so SMTP `RCPT TO` probing is impossible in-process. Nothing
    reaches `verified` without a vendor, which caps crawled role addresses at
    `found`. MX + `found` is enough to send.
-6. **Gmail OAuth.** `/api/v1/auth/google/{start,callback}`, storing the refresh
+6. **Signals and a real ICP — the current work.** Full plan at
+   `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`.
+   The complaint that started it: the ICP is driven by CAEN codes, which are an
+   industry proxy, not an ideal customer profile. It should match on needs,
+   keywords and competitor usage — the way Gojiberry does, whose flow is
+   Sources → Signals → Target → Preview → Outreach.
+
+   Decisions taken, do not revisit: **no LinkedIn now** (build a visible empty
+   slot for person-level engagement and match the intent with free EU-legal
+   sources meanwhile); **EU-ready model, RO data** — CAEN is Romania's
+   implementation of NACE, so the same codes target any EU registry the day one
+   is imported.
+
+   ~~**Phase 0** — one site read per scan, `DETECTABLE_TECH` exported,
+   `SignalScanContext` widened.~~ **Done** (`b391988`).
+
+   ~~**Phase 1** — wire the scanner end to end.~~ **Done** (`f23b4e3`):
+   `company_scans`, `src/lib/signals/repository.ts`, `anaf-row.ts`,
+   `src/lib/pipeline/signal-scan.ts`, `scripts/scan-signals.ts`,
+   `scripts/rescore-leads.ts`, and `findSignals` supplied in both callers.
+
+   **Phase 2 — keyword and competitor signals. ← next, and the important one.**
+   `KeywordSiteSignalSource` (ICP keywords against the already-fetched snapshot,
+   strength by which page they appear on) and `CompetitorTechSignalSource`
+   (intersect the snapshot's tech stack with the ICP's named competitors).
+   **Both fire on a first scan with no diff and cost no extra request** — which
+   is why they, not the seven existing sources, are where the signal is for this
+   market. Adds `competitorTech` / `competitorNames` to the ICP.
+
+   **Phase 3 — industries → NACE.** `src/lib/icp/industries.ts`, ~30 industries
+   each mapping to the NACE codes that mean it. Makes `industries` load-bearing
+   (today it is inert — produced by Claude, edited in the wizard, read by
+   nothing) and `caenCodes` derived-but-overridable. Stop asking Claude for CAEN
+   codes; ask for an enum of industry keys instead.
+
+   **Phase 4 — the wizard, five steps.** Sources / Signals / Target / Preview /
+   Outreach, including the signal picker (**no UI has ever written
+   `enabledSignals`**) and a lead preview with deterministic reject-to-refine.
+
+   **Phase 5 — the LinkedIn seam.** `PersonSignalProvider`, unimplemented, in
+   the style `MailboxVerifier` sets. Most of it already exists:
+   `SignalScanContext.people`, `signals.person_id`, `Signal.personLinkedinUrl`,
+   and `upsertSignals` already resolving that URL to a person id.
+7. **Gmail OAuth.** `/api/v1/auth/google/{start,callback}`, storing the refresh
    token encrypted via the existing `src/lib/outreach/crypto.ts`. Needs a Google
    Cloud project first.
 
@@ -365,6 +450,53 @@ Out of scope until the above works: queue consumers, cron handlers, the
 unsubscribe endpoint, Copilot.
 
 ## Landmines
+
+- **The ANAF financials pass was never run.** Only **29 of 17,156** companies
+  have both `revenue_ron` and `revenue_prev_ron`, so `anaf_growth` — the signal
+  no international tool can match — has almost nothing to work with.
+  `enrich-registry.ts` did the VAT pass and skipped financials (they are one
+  request per company per year, the slow part). Running it for the 5,406
+  companies with a domain is roughly 1.7 hours and would make the strongest
+  Romania-only signal actually fire.
+- **`caen_label` is wrong for a large share of rows, and CAEN revisions are
+  mixed.** `enrich-registry.ts:97` overwrites `caen` with ANAF's code and never
+  touches `caen_label`, which `import-onrc.ts:505` set from ONRC's *authorised*
+  activity. Measured: code `7311` (advertising agencies) carries six different
+  labels including software ones, and **both `6201` and `6210` hold software
+  companies** — ANAF files Rev. 2, ONRC lists Rev. 3. Consequences: never key
+  anything off `caen_label`, and an industry→code table must list every code
+  meaning that activity in **every revision in use** (the existing agent hedges
+  this by accident with `6201,6202,6203,6209,6210`).
+- **`signals_dedupe_idx` is UNIQUE on `dedupe_key` globally, not per company.**
+  The news source keys only on the article guid, so one article naming two
+  companies would have the second write steal the first company's row — silently.
+  `scopedDedupeKey` in `src/lib/signals/repository.ts` prefixes the company id
+  centrally. Do not push that responsibility back down into the sources; the
+  point is that a source author cannot get it wrong.
+- **Scan state is state, not a by-product.** `company_scans.tech_stack` is what
+  the *next* scan diffs against, so the scan reads the site itself rather than
+  relying on whichever source happens to want it. Recording it only as a side
+  effect meant a `--no-web` pass stored an empty stack and the scan after that
+  reported every technology as newly added.
+- **`fetchSiteSnapshot` has a much stricter reachability bar than
+  `fetchRoleEmails`.** It needs 200+ characters of real text on some page, so
+  JavaScript-only sites fail: **84 of 165** were unreachable to the scanner
+  against ~27% during the email harvest. Same sites, different verdict — do not
+  compare the two numbers.
+- **`policies.test.ts` used to apply only migration `0000`.** It had been
+  asserting RLS against a schema several migrations behind, and only broke when
+  `policies.sql` referenced a table a later migration created. It now applies
+  every `drizzle/NNNN_*.sql` in order and names the tables it expects rather
+  than counting them.
+- **Four ICP fields do nothing.** `industries` and `companyTypes` are never read
+  by scoring or by any query — `industries` is produced by Claude, edited in the
+  wizard, stored, and read by nothing. `keywords` affects sourcing (a name-ILIKE
+  fallback) but not the score. `caenCodes` does all the real work. Phase 3 of the
+  current plan inverts that.
+- **No UI has ever written `enabledSignals`.** The agent schema defaults it to
+  four sources and `agents/[id]/sources/page.tsx` displays On/Off pills that
+  cannot be clicked. Two code comments refer to a signal picker "in onboarding
+  step 4"; there is no such step.
 
 - **Contactability is 20% of the score and is currently always 0.** Hence the
   flat 45 on every lead. Do not go looking for a scoring bug — the scorer is
