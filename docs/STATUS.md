@@ -4,8 +4,8 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `7ccdcdb` — industries are the vocabulary, NACE the derivation.
-- **Green:** 791 tests, clean `typecheck` and `lint`.
+- **Last commit:** `b54abea` — the five-step wizard; `enabledSignals` is finally written by a UI.
+- **Green:** 810 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
   decision-makers**, **1,559 harvested email addresses**, **248 companies
   scanned for signals**. `/app` renders **911 leads**; **35 carry a real
@@ -21,7 +21,8 @@ re-explained or re-derived. Update it when the answers change.
   moved **48 leads by an average of 13.3 points**.
 - **Current work: the ICP and the wizard around it.** Plan at
   `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`.
-  Phases 0–3 are done; **Phase 4 (the five-step wizard) is next**.
+  Phases 0–4 are done; **Phase 5 is mostly done early** — what is left is
+  `contact_job_change` from ONRC representative diffs, which needs a second export.
 
 ## The two constant zeros
 
@@ -257,7 +258,7 @@ npm run db:types       # replaces the placeholder Database type (see below)
 
 The other `verify:*` scripts each drive one route against the running app with
 a throwaway tenant and delete it afterwards. Run them after touching the thing
-they cover: `verify:agents`, `verify:sourcing`, `verify:emails`.
+they cover: `verify:agents`, `verify:sourcing`, `verify:emails`, `verify:onboarding`.
 
 Ops scripts, in the order a fresh database needs them: `import:onrc` →
 `import:reps` → `enrich:registry` → `enrich:emails --companies` → `source` →
@@ -318,6 +319,8 @@ Neither substitutes for the other, and the second still gates a real user.
 | `competitor_tech` against real Romanian sites | **Verified** — 16 of 82 (19.5%), fires on a first scan with no diff |
 | `competitor_mention` | **Never fired** — no agent has named a competitor without a detectable marker. Untested, not disproven |
 | Keyword → company discovery via web search | **Verified as unusable here** — 82 hosts found, **2** joinable, and both were vendors not buyers |
+| The onboarding wizard's four routes | **Verified against a live database** — `verify:onboarding`, 22 checks including the plan cap on a second preview run |
+| The signal picker, industry picker and preview | **Verified in a browser** — five-step header, 37 industries with live code counts, derived codes updating on toggle |
 | Brave Search | **Verified live** — 59 queries spent. A TLD-only `site:` operator returns **zero** results |
 | Industry → CAEN derivation | **Verified against the live database** — the model's hand-written software list missed **758 companies (+13.1%)** the nomenclator-derived one catches |
 | CAEN 2025 abolished the e-commerce class | **Verified in the official nomenclator** — `4791` was reassigned and there is no replacement |
@@ -581,9 +584,12 @@ has rows.
    load-bearing, `caenCodes` is derived-but-overridable, and Claude is no longer
    asked for a code. See "CAEN is four registers wearing one column" above.
 
-   **Phase 4 — the wizard, five steps. ← next.** Sources / Signals / Target / Preview /
-   Outreach, including the signal picker (**no UI has ever written
-   `enabledSignals`**) and a lead preview with deterministic reject-to-refine.
+   ~~**Phase 4** — the wizard, five steps.~~ **Done** (`b54abea`). Sources /
+   Signals / Target / Preview / Outreach. The signal picker is the first UI ever
+   to write `enabledSignals`; the Target step is a searchable industry picker
+   with CAEN collapsed behind it; the Preview sources five real leads against a
+   reused draft agent and turns rejections into deterministic suggestions.
+   `npm run verify:onboarding` drives all four routes against a live database.
 
    ~~**Phase 5 — the LinkedIn seam.**~~ **Done early** (`41323a9`), pulled
    forward because Phase 4's picker needs the catalogue entry. See the
@@ -601,6 +607,20 @@ Out of scope until the above works: queue consumers, cron handlers, the
 unsubscribe endpoint, Copilot.
 
 ## Landmines
+
+- **Deselecting an industry has to clear the free text too.** `industries` and
+  `industryKeys` are two representations of one thing, and
+  `normaliseIcpIndustries` resolves the first into the second — that is the
+  mechanism, not a bug. But it means removing only the key leaves the phrase
+  behind and the next pass puts the industry straight back. Both callers that
+  remove a key (`IndustryPicker.toggle`, `applyRefinement`) drop the matching
+  phrase by **resolving** it, not by comparing to the label. Found by clicking a
+  checkbox that did nothing, not by a test.
+- **`/onboarding?seed=demo` is development-only** and gated on `NODE_ENV`. It
+  exists because step 1 needs `ANTHROPIC_API_KEY` — which is present but *empty*
+  in `.env.local`, so the ICP analysis has still never run — while steps 2 to 5
+  do not. Without it the new screens are unreachable without spending a Claude
+  call.
 
 - **An empty `enabled_signals` means *every* source, including the expensive
   ones.** `selectSignalSources` treats an empty list as "run everything", which
