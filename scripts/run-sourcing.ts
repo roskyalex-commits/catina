@@ -14,6 +14,7 @@
  * operator's tool rather than something the app calls.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { applyIcpRangeFilters } from "@/lib/sources/anaf/adapter";
 import { icpSchema, type Icp } from "@/lib/icp/schema";
 import {
   sourceRun,
@@ -174,6 +175,12 @@ async function main() {
       // no website cannot be emailed by any free route, so it cannot clear 45.
       if (options.contactable) query = query.not("domain", "is", null);
       if (currentIcp.caenCodes.length) query = query.in("caen", currentIcp.caenCodes);
+      /*
+       * Headcount and revenue, from the same helper the route's adapter uses.
+       * This query used to omit them, so `--agent` with a size filter sourced
+       * the entire register and the run reported success while doing it.
+       */
+      query = applyIcpRangeFilters(query, currentIcp);
 
       const { data, error } = await query;
       if (error) throw error;

@@ -24,6 +24,39 @@ import { AnafClient, type AnafCompany } from "./client";
  * Both halves are free and need no API key, which is what makes the Romanian
  * market viable at zero data cost.
  */
+/**
+ * The ICP filters that are plain SQL ranges, in one place.
+ *
+ * Extracted because there are two `findCompanies` implementations — this
+ * adapter, used by the sourcing route, and a hand-rolled query in
+ * `scripts/run-sourcing.ts` — and they had silently diverged. The script
+ * applied country, insolvency and CAEN and **ignored headcount and revenue
+ * entirely**, so an agent asking for 20+ employees got the whole register.
+ *
+ * That is invisible in the output: the run reports leads created, not leads
+ * correctly filtered, and a mid-market agent quietly sourcing sole traders
+ * looks exactly like one that worked. Sharing the predicate is the only way two
+ * callers cannot drift again.
+ *
+ * Note what a `gte` on a nullable column does, because it is the intended
+ * behaviour and looks like a bug: `employees_anaf` is null for the 75% of
+ * companies with no filed accounts, and SQL excludes nulls from a comparison.
+ * An agent that asks for 20+ employees therefore gets only companies whose
+ * headcount we actually know. That is right — "we cannot tell" is not "big
+ * enough" — but it means a size filter also silently narrows to filed
+ * companies, which is worth knowing when a page comes back short.
+ */
+export function applyIcpRangeFilters<
+  Q extends { gte(column: string, value: number): Q; lte(column: string, value: number): Q },
+>(query: Q, icp: Icp): Q {
+  let q = query;
+  if (icp.employeeMin !== null) q = q.gte("employees_anaf", icp.employeeMin);
+  if (icp.employeeMax !== null) q = q.lte("employees_anaf", icp.employeeMax);
+  if (icp.revenueMinRon !== null) q = q.gte("revenue_ron", icp.revenueMinRon);
+  if (icp.revenueMaxRon !== null) q = q.lte("revenue_ron", icp.revenueMaxRon);
+  return q;
+}
+
 export class AnafAdapter implements LeadSourceAdapter {
   readonly key = "anaf";
   readonly label = "Romanian company registry (ANAF/ONRC)";
@@ -122,20 +155,7 @@ export class AnafAdapter implements LeadSourceAdapter {
       .limit(limit);
 
     if (cursor) q = q.gt("id", cursor);
-
-    if (icp.employeeMin !== null) {
-      q = q.gte("employees_anaf", icp.employeeMin);
-    }
-    if (icp.employeeMax !== null) {
-      q = q.lte("employees_anaf", icp.employeeMax);
-    }
-    if (icp.revenueMinRon !== null) {
-      q = q.gte("revenue_ron", icp.revenueMinRon);
-    }
-    if (icp.revenueMaxRon !== null) {
-      q = q.lte("revenue_ron", icp.revenueMaxRon);
-    }
-    return q;
+    return applyIcpRangeFilters(q, icp);
   }
 
   private async queryRegistry(
