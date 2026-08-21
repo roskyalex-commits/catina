@@ -202,9 +202,19 @@ export function generateCandidates(
     knownPattern?: EmailPattern;
     patternConfidence?: number;
     max?: number;
+    /**
+     * Already-resolved halves, overriding the split of `fullName`.
+     *
+     * Load-bearing for register data. `splitFullName` reads a name
+     * given-first, which is right for a vendor and wrong for ONRC — see
+     * `romanian-names.ts`. A caller holding a `people` row has the halves
+     * resolved correctly already and must pass them here rather than let them
+     * be re-derived from a display name that is in the other order.
+     */
+    parts?: NameParts;
   } = {},
 ): EmailCandidate[] {
-  const parts = splitFullName(fullName);
+  const parts = options.parts ?? splitFullName(fullName);
   if (!parts.firstName) return [];
 
   const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, "");

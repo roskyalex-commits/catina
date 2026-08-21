@@ -79,6 +79,23 @@ export type WaterfallInput = {
   knownRoleEmails?: string[];
   /** Confirmed name/address pairs at this domain, for pattern inference. */
   knownContacts?: { email: string; fullName: string }[];
+  /**
+   * The convention already known for this domain, from a previous harvest.
+   *
+   * Preferred over `knownContacts` when both are present: the stored pattern
+   * was inferred once from every address the domain published, while
+   * `knownContacts` is whatever this caller happened to have. Re-deriving it
+   * per lead would also mean every lead at a company re-doing the same work.
+   */
+  knownPattern?: { pattern: EmailPattern; confidence: number };
+  /**
+   * The person's name halves, already resolved.
+   *
+   * Must be supplied for anyone out of the register: `splitFullName` reads
+   * given-name-first and ONRC writes surname-first, so letting the display name
+   * be re-split here produces `podar.mihaela@` for Simona Podar.
+   */
+  nameParts?: { firstName?: string; lastName?: string };
   /** Stop once a result at or above this confidence is found. */
   targetConfidence?: number;
 };
@@ -162,11 +179,12 @@ export class EmailWaterfall {
     }
 
     // --- 2. Pattern inference from confirmed contacts ----------------------
-    const inferred = this.inferPattern(input);
+    const inferred = input.knownPattern ?? this.inferPattern(input);
     if (inferred) {
       const [candidate] = generateCandidates(input.fullName, input.domain, {
         knownPattern: inferred.pattern,
         patternConfidence: inferred.confidence,
+        parts: input.nameParts,
         max: 1,
       });
 
@@ -277,7 +295,20 @@ export class EmailWaterfall {
 
     // --- Optional mailbox verification -------------------------------------
     let best = bestOf(candidates);
-    if (best && this.deps.verifier) {
+    /*
+     * Verify everything except what we saw published.
+     *
+     * A crawled address was read off the company's own contact page: the
+     * company put it there for people to write to, which is the strongest
+     * evidence available short of delivery, and spending a credit to re-learn
+     * it is a lead we cannot reach later on a 600-a-month free tier.
+     *
+     * Everything else is worth the credit. A generated address is a guess whose
+     * entire standing depends on this check, and a vendor's answer is a claim
+     * by a third party that we have not independently confirmed — its `verified`
+     * status reflects the vendor's confidence, not ours.
+     */
+    if (best && best.provider !== "crawler" && this.deps.verifier) {
       const candidate = best;
       try {
         const verdict = await this.deps.verifier.verify(candidate.address);
@@ -315,7 +346,10 @@ export class EmailWaterfall {
     // Returned as alternatives only, never as `email`. A guess must reach a
     // human before it reaches a mailbox.
     if (!best) {
-      const guesses = generateCandidates(input.fullName, input.domain, { max: 3 });
+      const guesses = generateCandidates(input.fullName, input.domain, {
+        parts: input.nameParts,
+        max: 3,
+      });
       for (const guess of guesses) {
         candidates.push({
           address: guess.address,

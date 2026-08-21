@@ -28,6 +28,7 @@ import {
   buildWaterfall,
   enrichLead,
   enrichableLeadFrom,
+  knownPatternsFor,
   knownRoleEmailsFor,
   saveCompanyRoleEmail,
   saveEnrichment,
@@ -268,10 +269,14 @@ async function main() {
 
   // Whatever the company harvest already found, so a second pass over the same
   // company does not re-fetch the same page.
-  const known = await knownRoleEmailsFor(
-    db,
-    withDomain.map((lead) => lead.companyId).filter((id): id is string => id !== null),
-  );
+  const companyIds = withDomain
+    .map((lead) => lead.companyId)
+    .filter((id): id is string => id !== null);
+
+  const known = await knownRoleEmailsFor(db, companyIds);
+  // Conventions learned by `npm run harvest:patterns`. A domain with one turns
+  // every resolved administrator into a candidate address at high confidence.
+  const patterns = await knownPatternsFor(db, companyIds);
 
   const waterfall = buildWaterfall(db, orgId);
   let found = 0;
@@ -282,7 +287,11 @@ async function main() {
   for (const [index, lead] of withDomain.entries()) {
     const outcome = await enrichLead(
       { waterfall, roleEmails: fetchRoleEmails },
-      { ...lead, knownRoleEmails: known.get(lead.companyId ?? "") },
+      {
+        ...lead,
+        knownRoleEmails: known.get(lead.companyId ?? ""),
+        knownPattern: patterns.get(lead.companyId ?? ""),
+      },
       { force: options.force },
     );
 

@@ -195,11 +195,24 @@ export function detectProvider(hosts: string[]): MxResult["provider"] {
  * (a vendor endpoint, or a separate runtime that can open port 25) without the
  * waterfall itself needing to change.
  */
+export type VerificationVerdict = {
+  address: string;
+  status: "verified" | "risky" | "invalid" | "unknown";
+  reason?: string;
+  /**
+   * The domain accepts every recipient, so the check proved nothing.
+   *
+   * Surfaced separately from `status` because it is a fact about the *domain*
+   * worth storing once, not a fact about this address: every future candidate
+   * at a catch-all domain is equally unconfirmable, and knowing that in advance
+   * is the difference between spending a credit and skipping it.
+   */
+  isCatchAll?: boolean;
+};
+
 export interface MailboxVerifier {
   readonly key: string;
-  verify(address: string): Promise<{
-    address: string;
-    status: "verified" | "risky" | "invalid" | "unknown";
-    reason?: string;
-  }>;
+  readonly label: string;
+  isConfigured(): boolean;
+  verify(address: string): Promise<VerificationVerdict>;
 }

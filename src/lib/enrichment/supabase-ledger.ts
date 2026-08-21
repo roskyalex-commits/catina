@@ -99,4 +99,11 @@ export const FREE_TIER_LIMITS: Record<string, number> = {
   prospeo: 75,
   pdl: 100,
   apify: 100,
+  /*
+   * Reoon's documented free allowance. Larger than the people providers because
+   * it is doing something cheaper, and it needs to be: verification is spent
+   * once per *candidate address*, and a person with an uncertain compound name
+   * can produce two or three.
+   */
+  reoon: 600,
 };

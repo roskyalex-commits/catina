@@ -7,6 +7,9 @@ import { embedded } from "@/lib/data/rows";
 import { optionalDate, optionalString, requireString } from "@/lib/supabase/row";
 import { CreditLedger } from "./ledger";
 import { MxChecker } from "./mx";
+import type { EmailPattern } from "./patterns";
+import { MIN_NAME_CONFIDENCE, resolvePersonName } from "./romanian-names";
+import { preferredVerifier } from "./verifiers/registry";
 import { FREE_TIER_LIMITS, SupabaseUsageStore } from "./supabase-ledger";
 import {
   EmailWaterfall,
@@ -67,6 +70,22 @@ export type EnrichableLead = {
    * absent means "not harvested yet", and the crawl runs.
    */
   knownRoleEmails?: string[];
+  /**
+   * Which source wrote this person, so their name can be read in the right
+   * order. `onrc` is surname-first; a vendor is not.
+   */
+  personSource?: string | null;
+  /** Already-split halves, when the backfill has run for this person. */
+  firstName?: string | null;
+  lastName?: string | null;
+  /**
+   * The company's email convention, learned by a previous harvest.
+   *
+   * Read from `company_scans` rather than re-derived: it was inferred once from
+   * every address the domain published, and every lead at that company should
+   * use the same answer.
+   */
+  knownPattern?: { pattern: EmailPattern; confidence: number };
 };
 
 export type EnrichmentOutcome = {
@@ -134,11 +153,38 @@ export async function enrichLead(
     ? lead.knownRoleEmails
     : await crawl(lead.domain).catch(() => []);
 
+  /*
+   * Resolve the name here, not inside the waterfall.
+   *
+   * The waterfall cannot do it: which order a name is written in is a fact
+   * about the *source row*, and by the time a name reaches the waterfall it is
+   * a bare string. Passing the halves down is what stops `Podar Simona Mihaela`
+   * becoming `podar.mihaela@`.
+   */
+  const resolved = resolvePersonName({
+    fullName: lead.fullName,
+    firstName: lead.firstName,
+    lastName: lead.lastName,
+    source: lead.personSource,
+  });
+
+  /*
+   * An unresolvable name gets no generated address, only whatever the crawl
+   * found. Skipping costs one contact; guessing puts a stranger's name on an
+   * email to their employer and cannot be taken back.
+   */
+  const nameParts =
+    resolved.confidence >= MIN_NAME_CONFIDENCE
+      ? { firstName: resolved.firstName, lastName: resolved.lastName }
+      : { firstName: undefined, lastName: undefined };
+
   const result = await deps.waterfall.resolve({
     fullName: lead.fullName,
     domain: lead.domain,
     companyName: lead.companyName,
     knownRoleEmails,
+    nameParts,
+    knownPattern: lead.knownPattern,
     targetConfidence: options.targetConfidence ?? ROLE_ADDRESS_IS_ENOUGH,
   });
 
@@ -192,14 +238,23 @@ export function buildWaterfall(
       APIFY_TOKEN: env.APIFY_TOKEN,
       APIFY_PEOPLE_ACTOR: env.APIFY_PEOPLE_ACTOR,
     }),
-    // No verifier: Cloudflare Workers blocks outbound port 25, so SMTP RCPT
-    // probing is impossible in-process. See step 5d in docs/STATUS.md.
+    /*
+     * The verifier, when a key is set. Null is a supported state: without one
+     * the waterfall simply never promotes a generated address past `pattern`,
+     * so the product degrades to crawled role addresses rather than sending to
+     * guesses.
+     *
+     * A local implementation remains impossible — Workers blocks outbound port
+     * 25, so SMTP `RCPT TO` probing cannot happen in-process. That constraint
+     * is why this is a vendor seam and not a function.
+     */
+    verifier: preferredVerifier({ REOON_API_KEY: env.REOON_API_KEY }) ?? undefined,
   });
 }
 
 /** The joined shape both the route and the bulk script select. Keep on one line. */
 export const ENRICHABLE_LEAD_COLUMNS =
-  "id, person_id, company_id, score_breakdown, enriched_at, people(full_name), companies(name, domain)";
+  "id, person_id, company_id, score_breakdown, enriched_at, people(full_name, first_name, last_name, source), companies(name, domain)";
 
 /**
  * Map the joined row to what enrichment needs.
@@ -218,6 +273,9 @@ export function enrichableLeadFrom(row: Record<string, unknown>): EnrichableLead
     personId: optionalString(row.person_id) ?? null,
     companyId: optionalString(row.company_id) ?? null,
     fullName: optionalString(person?.full_name) ?? "",
+    firstName: optionalString(person?.first_name) ?? null,
+    lastName: optionalString(person?.last_name) ?? null,
+    personSource: optionalString(person?.source) ?? null,
     companyName: optionalString(company?.name) ?? "",
     domain: optionalString(company?.domain) ?? null,
     // A lead with no stored breakdown would otherwise re-score from nothing and
@@ -315,6 +373,43 @@ export async function saveCompanyRoleEmail(
       mxValid: undefined,
     },
   );
+}
+
+/**
+ * The email conventions already learned for these companies.
+ *
+ * Read in one query, like `knownRoleEmailsFor` beside it and for the same
+ * reason: a bulk run touches hundreds of leads, and a lookup each is how a
+ * script acquires an N+1 against a hosted database.
+ */
+export async function knownPatternsFor(
+  db: SupabaseClient,
+  companyIds: string[],
+): Promise<Map<string, { pattern: EmailPattern; confidence: number }>> {
+  const byCompany = new Map<string, { pattern: EmailPattern; confidence: number }>();
+  if (companyIds.length === 0) return byCompany;
+
+  const { data, error } = await db
+    .from("company_scans")
+    .select("company_id, email_pattern, email_pattern_confidence")
+    .in("company_id", companyIds)
+    .not("email_pattern", "is", null);
+
+  if (error) {
+    console.error("Reading known email patterns failed:", error.message);
+    return byCompany;
+  }
+
+  for (const row of data ?? []) {
+    const pattern = optionalString((row as Record<string, unknown>).email_pattern);
+    if (!pattern) continue;
+    byCompany.set(requireString((row as Record<string, unknown>).company_id, "company_id"), {
+      pattern: pattern as EmailPattern,
+      confidence:
+        Number((row as Record<string, unknown>).email_pattern_confidence ?? 0) || 0.6,
+    });
+  }
+  return byCompany;
 }
 
 /**

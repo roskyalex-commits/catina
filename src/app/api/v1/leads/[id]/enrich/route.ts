@@ -3,6 +3,7 @@ import {
   buildWaterfall,
   enrichLead,
   enrichableLeadFrom,
+  knownPatternsFor,
   knownRoleEmailsFor,
   saveEnrichment,
   ENRICHABLE_LEAD_COLUMNS,
@@ -87,12 +88,22 @@ export async function POST(
       ? await knownRoleEmailsFor(admin, [lead.companyId])
       : new Map<string, string[]>();
 
+    // The company's email convention, if a harvest has learned one. Without it
+    // the waterfall can only offer whatever the crawl finds.
+    const patterns = lead.companyId
+      ? await knownPatternsFor(admin, [lead.companyId])
+      : undefined;
+
     // Asking from the UI is an explicit instruction, so a previous empty result
     // does not stand in the way. The bulk script is the one that must not
     // re-spend, and it leaves `force` off.
     const outcome = await enrichLead(
       { waterfall: buildWaterfall(admin, orgId) },
-      { ...lead, knownRoleEmails: known.get(lead.companyId ?? "") },
+      {
+        ...lead,
+        knownRoleEmails: known.get(lead.companyId ?? ""),
+        knownPattern: patterns?.get(lead.companyId ?? ""),
+      },
       { force: true },
     );
 
