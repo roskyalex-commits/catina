@@ -317,6 +317,18 @@ export const emails = pgTable(
     mxValid: boolean("mx_valid"),
     smtpChecked: boolean("smtp_checked").notNull().default(false),
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
+
+    /**
+     * The page this address was published on.
+     *
+     * Provenance, and it is not optional in spirit for a harvested address. It
+     * answers "where did you get this" without anyone having to reconstruct a
+     * crawl, which is what a subject access request asks and what distinguishes
+     * an address a company published from one we generated. Null for a
+     * pattern-derived address, which by definition came from no page.
+     */
+    sourceUrl: text("source_url"),
+
     createdAt: createdAt(),
   },
   (t) => [
@@ -370,6 +382,40 @@ export const companyScans = pgTable(
      */
     revenueRon: numeric("revenue_ron"),
     vatRegistered: boolean("vat_registered"),
+
+    /**
+     * The company's email convention, and how well we know it.
+     *
+     * A fact about the *company*, not about any one person, which is why it
+     * lives on the scan row rather than beside an address. Once `first.last` is
+     * confirmed here, every administrator ONRC gives us at this domain has a
+     * derivable address at high confidence — that is the whole mechanism by
+     * which a named contact becomes reachable without a data vendor.
+     *
+     * `emailPatternSource` separates the two ways it can be known: `inferred`
+     * from an address actually published at this domain, or `prior` from the
+     * measured distribution across every domain we have inferred. The
+     * difference is large and must not be flattened into the confidence alone.
+     */
+    emailPattern: text("email_pattern"),
+    emailPatternConfidence: real("email_pattern_confidence"),
+    emailPatternSource: text("email_pattern_source", {
+      enum: ["inferred", "prior"],
+    }),
+    /** Confirmed name/address pairs behind the pattern. One is weak, three is not. */
+    emailPatternSamples: integer("email_pattern_samples").notNull().default(0),
+
+    /**
+     * Where the domain's mail actually lands, from the MX lookup.
+     *
+     * Kept because deliverability behaviour is provider-specific: a Google
+     * Workspace tenant rejects unknown recipients, while a shared cPanel host
+     * usually accepts everything. `catchAll` is that second case, and it is the
+     * reason a verified-looking answer can still be worthless — an address at a
+     * catch-all domain is never promoted past `risky`.
+     */
+    mxProvider: text("mx_provider"),
+    catchAll: boolean("catch_all"),
 
     /** Which ICP keywords were found, and on which page. */
     keywordHits: jsonb("keyword_hits"),

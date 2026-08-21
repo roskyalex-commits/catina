@@ -318,6 +318,24 @@ export async function saveCompanyRoleEmail(
 }
 
 /**
+ * An address read off a company's own site, with the page that published it.
+ *
+ * Shares `upsertEmail` with every other writer rather than issuing its own
+ * insert, because the uniqueness rule here is subtle enough to get wrong twice:
+ * `emails_person_address_idx` is on `(person_id, address)`, and Postgres treats
+ * NULLs as distinct — so a role address, which has no person, does not conflict
+ * with itself and a plain upsert would duplicate it on every re-run.
+ */
+export async function saveHarvestedEmail(
+  admin: SupabaseClient,
+  target: { personId: string | null; companyId: string },
+  email: ResolvedEmail,
+  sourceUrl: string,
+): Promise<SaveEnrichmentResult> {
+  return upsertEmail(admin, target, email, sourceUrl);
+}
+
+/**
  * Role addresses already harvested for these companies.
  *
  * Read in one query rather than per lead: a bulk run touches hundreds of leads
@@ -363,6 +381,8 @@ async function upsertEmail(
   admin: SupabaseClient,
   target: { personId: string | null; companyId: string | null },
   email: ResolvedEmail,
+  /** The page it was published on, for a harvested address. */
+  sourceUrl?: string,
 ): Promise<SaveEnrichmentResult> {
   const address = email.address.toLowerCase();
 
@@ -391,6 +411,12 @@ async function upsertEmail(
     mx_valid: email.mxValid ?? null,
     // Only a mailbox check may set this, and there is no verifier yet.
     smtp_checked: false,
+    /*
+     * Preserved, not overwritten, when absent. A later pass that re-resolves an
+     * address without crawling must not erase the record of where the earlier
+     * one found it — provenance is the thing we would most regret losing.
+     */
+    ...(sourceUrl ? { source_url: sourceUrl } : {}),
   };
 
   const written = found.data

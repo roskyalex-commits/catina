@@ -22,6 +22,7 @@
     "source": "tsx scripts/run-sourcing.ts",
     "discover:domains": "tsx scripts/discover-domains.ts",
     "enrich:emails": "tsx scripts/enrich-emails.ts",
+    "harvest:patterns": "tsx scripts/harvest-patterns.ts",
     "scan:signals": "tsx scripts/scan-signals.ts",
     "rescore:leads": "tsx scripts/rescore-leads.ts",
     "measure:keyword-sourcing": "tsx scripts/measure-keyword-sourcing.ts",

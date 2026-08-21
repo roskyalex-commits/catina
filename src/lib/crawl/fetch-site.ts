@@ -232,6 +232,52 @@ export const ROLE_PREFIXES = new Set([
   "jobs",
   "secretariat",
   "comenzi",
+  /*
+   * The Romanian departmental long tail, added after measuring.
+   *
+   * A first harvest over 200 sites classified `administratie@`, `comercial@`,
+   * `showroom@`, `relatiiclienti@`, `asistenta@` and `welcome@` as *personal*
+   * addresses, because the list above only covered the English-centric names an
+   * international company uses. Fourteen of the nineteen supposedly personal
+   * addresses it stored were departmental.
+   *
+   * That is not a cosmetic misfiling. A role address reaches a company and a
+   * personal one reaches an individual, which is the distinction the whole
+   * consent posture rests on — so a departmental address filed as personal is
+   * both worse data and a worse legal position.
+   */
+  "administratie",
+  "comercial",
+  "showroom",
+  "receptie",
+  "asistenta",
+  "relatii",
+  "relatiiclienti",
+  "relatiipublice",
+  "productie",
+  "logistica",
+  "depozit",
+  "achizitii",
+  "aprovizionare",
+  "financiar",
+  "facturare",
+  "contabilitate",
+  "juridic",
+  "tehnic",
+  "service",
+  "rezervari",
+  "programari",
+  "abonamente",
+  "welcome",
+  "salut",
+  "hireme",
+  "recrutare",
+  "parteneri",
+  "colaborari",
+  "presa",
+  "media",
+  "no-reply",
+  "noreply",
 ]);
 
 /**
@@ -408,4 +454,109 @@ export async function fetchRoleEmails(rawDomain: string): Promise<string[]> {
   }
 
   return [...found];
+}
+
+/**
+ * Pages where a Romanian company publishes named staff, in order of yield.
+ *
+ * Wider than `CONTACT_PATHS` because the target is different. That one wants
+ * `office@` and stops at the first hit, since the footer usually carries it.
+ * This one wants as many *named* addresses as it can find, because two samples
+ * at a domain settle a convention that one leaves ambiguous.
+ */
+const TEAM_PATHS = [
+  "/contact",
+  "/contacte",
+  "/echipa",
+  "/team",
+  "/despre-noi",
+  "/about",
+  "/management",
+  "/conducere",
+  "/",
+];
+
+/** Enough pages to find a second sample, few enough to stay a polite guest. */
+const MAX_TEAM_PAGES = 5;
+/**
+ * Two confirmed samples make a convention; a third adds little.
+ * `inferDominantPattern` already caps its confidence at three.
+ */
+const ENOUGH_SAMPLES = 3;
+
+export type HarvestedAddress = {
+  address: string;
+  /** The page it was published on — provenance, and what a DSAR needs. */
+  sourceUrl: string;
+  isRole: boolean;
+};
+
+/**
+ * Every address published at one domain, role and personal alike.
+ *
+ * The distinction `fetchRoleEmails` enforces is deliberately *not* enforced
+ * here, and the difference matters legally, so it is worth being explicit about
+ * which caller is which. `fetchRoleEmails` runs over every prospect in the
+ * register and returns only what a company publishes as its own contact route.
+ * This runs on the enrichment path, where the goal is a named contact and the
+ * user has accepted that posture; the addresses it returns carry `sourceUrl` so
+ * every one of them can be traced back to the page that published it.
+ *
+ * Returns `[]` rather than throwing, for the same reason `fetchRoleEmails`
+ * does: a site that is down or JavaScript-only is the ordinary case.
+ */
+export async function fetchContactAddresses(
+  rawDomain: string,
+): Promise<HarvestedAddress[]> {
+  let url: URL;
+  try {
+    url = normaliseUrl(rawDomain);
+  } catch {
+    return [];
+  }
+
+  const origin = url.origin;
+  const domain = url.hostname.replace(/^www\./, "");
+  const disallows = await loadRobotsRules(origin);
+
+  const found = new Map<string, HarvestedAddress>();
+  let pagesRead = 0;
+
+  for (const path of TEAM_PATHS) {
+    if (pagesRead >= MAX_TEAM_PAGES) break;
+    if (!isAllowed(path, disallows)) continue;
+
+    const res = await fetchWithTimeout(`${origin}${path}`);
+    if (!res?.ok) continue;
+    if (!res.headers.get("content-type")?.includes("text/html")) continue;
+
+    const raw = await res.text();
+    if (raw.length > MAX_BYTES_PER_PAGE) continue;
+    pagesRead += 1;
+
+    const sourceUrl = `${origin}${path}`;
+    for (const address of extractEmails(raw, domain)) {
+      // First page wins the provenance: if `office@` appears in the footer of
+      // every page, the URL recorded should be where it was actually read.
+      if (found.has(address)) continue;
+      found.set(address, { address, sourceUrl, isRole: isRolePrefix(address) });
+    }
+
+    const personal = [...found.values()].filter((entry) => !entry.isRole);
+    if (personal.length >= ENOUGH_SAMPLES) break;
+  }
+
+  return [...found.values()];
+}
+
+/**
+ * Local copy of the role test, rather than importing `isRoleAddress` from
+ * `enrichment/patterns.ts`.
+ *
+ * `ROLE_PREFIXES` in this file is the list `extractEmails` already partitions
+ * on, so using anything else here would let an address be classified one way
+ * on the way out of the crawler and the other way on the way into the database.
+ */
+function isRolePrefix(address: string): boolean {
+  return ROLE_PREFIXES.has(address.split("@")[0].split("+")[0]);
 }

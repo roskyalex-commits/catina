@@ -70,6 +70,10 @@ export const MIN_NAME_CONFIDENCE = 0.6;
  * were folded on the way in, so they must be folded the same way on the way
  * out.
  */
+export function foldToken(value: string): string {
+  return fold(value);
+}
+
 function fold(value: string): string {
   return value
     .normalize("NFD")
@@ -107,7 +111,21 @@ export function nameOrderForSource(source: string | null | undefined): NameOrder
   }
 }
 
-type Class = "given" | "surname" | "ambiguous" | "unknown";
+export type NameClass = "given" | "surname" | "ambiguous" | "unknown";
+
+type Class = NameClass;
+
+/**
+ * What the register's own statistics say about one already-folded token.
+ *
+ * Exported because the lexicon is useful beyond splitting a name: reading
+ * `cristian.petrache@` as `first.last` needs exactly this question answered
+ * about `cristian`, and the answer must come from the same table or the two
+ * would drift.
+ */
+export function classifyToken(token: string): NameClass {
+  return classify(token);
+}
 
 function classify(token: string): Class {
   // Ambiguous is checked first: a token in both lists is exactly the case the
