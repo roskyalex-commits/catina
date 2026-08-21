@@ -19,6 +19,7 @@ import {
 } from "@/components/contacts/enrichment";
 import { ScoreExplanation } from "@/components/leads/score-badge";
 import { Avatar, Flames, relativeTime } from "@/components/ui/primitives";
+import { telHref } from "@/lib/data/rows";
 import type { ContactRow, FitFeedback } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
 
@@ -172,7 +173,9 @@ function ContactsTableBody({ rows }: { rows: ContactRow[] }) {
                     and 98.2% of companies now carry one from the ordinary
                     registry pass. Nothing is left to enrich on demand.
                   */}
-                  {row.phone ?? (
+                  {row.phone ? (
+                    <PhoneLink phone={row.phone} name={row.fullName} />
+                  ) : (
                     <span title="ANAF has no phone number on file for this company">—</span>
                   )}
                 </td>
@@ -236,8 +239,20 @@ function ContactsTableBody({ rows }: { rows: ContactRow[] }) {
                         <dl className="grid h-fit grid-cols-2 gap-x-6 gap-y-3 text-[13px]">
                           <Detail label="Company" value={row.companyName} />
                           <Detail label="Domain" value={row.companyDomain} />
-                          <Detail label="Country" value={row.country} />
+                          {/*
+                            Phone leads the reachability half, and on this data
+                            it outranks email by an order of magnitude: 75.5% of
+                            leads carry a number against 0.4% with a verified
+                            address. A lead card that shows only the email is
+                            reporting the channel we mostly do not have.
+                          */}
+                          <Detail
+                            label="Phone"
+                            value={row.phone}
+                            href={telHref(row.phone)}
+                          />
                           <Detail label="County" value={row.county} />
+                          <Detail label="Country" value={row.country} />
                           <Detail label="CAEN" value={row.caen} />
                           <Detail
                             label="Email confidence"
@@ -246,6 +261,19 @@ function ContactsTableBody({ rows }: { rows: ContactRow[] }) {
                                 ? `${Math.round(row.email.confidence * 100)}%`
                                 : null
                             }
+                          />
+                          {/*
+                            Full width: the register writes an address as
+                            `JUD. CLUJ, MUN. CLUJ-NAPOCA, STR. …` and wrapping
+                            it into a half-column makes four lines of shouting.
+                            Shown verbatim — it is the string a courier form or
+                            a contract wants, and title-casing Romanian street
+                            names reliably mangles them.
+                          */}
+                          <Detail
+                            label="Registered address"
+                            value={row.address}
+                            className="col-span-2"
                           />
                         </dl>
                       </div>
@@ -260,11 +288,60 @@ function ContactsTableBody({ rows }: { rows: ContactRow[] }) {
   );
 }
 
-function Detail({ label, value }: { label: string; value: string | null }) {
+/**
+ * The phone number, dialable.
+ *
+ * The one channel that works on most of this list: 75.5% of leads carry a
+ * number and 0.4% carry a verified address, so for three leads in four the
+ * phone is the only way to reach them today. Making it a link rather than text
+ * is the difference between data and an action.
+ *
+ * Falls back to plain text when the filed number is too mangled to dial — see
+ * `telHref`. Showing it anyway lets the user read and fix it.
+ */
+function PhoneLink({ phone, name }: { phone: string; name: string }) {
+  const href = telHref(phone);
+  if (!href) return <span>{phone}</span>;
   return (
-    <div>
+    <a
+      href={href}
+      aria-label={`Call ${name} on ${phone}`}
+      className="text-info underline decoration-border-strong underline-offset-2 hover:decoration-accent"
+    >
+      {phone}
+    </a>
+  );
+}
+
+function Detail({
+  label,
+  value,
+  href,
+  className,
+}: {
+  label: string;
+  value: string | null;
+  /** Makes the value actionable — a `tel:` link, today. */
+  href?: string | null;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
       <dt className="text-muted">{label}</dt>
-      <dd className="mt-0.5">{value ?? "—"}</dd>
+      <dd className="mt-0.5 break-words">
+        {value === null ? (
+          "—"
+        ) : href ? (
+          <a
+            href={href}
+            className="text-info underline decoration-border-strong underline-offset-2 hover:decoration-accent"
+          >
+            {value}
+          </a>
+        ) : (
+          value
+        )}
+      </dd>
     </div>
   );
 }

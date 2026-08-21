@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Signal } from "@/lib/signals/types";
-import { contactRowFrom } from "./rows";
+import { contactRowFrom, telHref } from "./rows";
 
 /**
  * The SIGNAL column is the product's whole claim in one cell, and it spent
@@ -104,5 +104,40 @@ describe("the SIGNAL column", () => {
       [],
     );
     expect(row.signal?.title).toBe("Matched your targeting");
+  });
+});
+
+/**
+ * Every input below is a real value from the `companies` table. The register
+ * takes the number as filed, so "however the company wrote it" is the format.
+ */
+describe("telHref", () => {
+  it("dials a plain number", () => {
+    expect(telHref("0264595091")).toBe("tel:0264595091");
+  });
+
+  it("strips the separators a company typed", () => {
+    expect(telHref("021.351.35.30")).toBe("tel:0213513530");
+    expect(telHref("+40 264 000 000")).toBe("tel:+40264000000");
+    expect(telHref("(0264) 59-50-91")).toBe("tel:0264595091");
+  });
+
+  it("takes the first of two numbers rather than welding them together", () => {
+    // Joining these produces a third number that belongs to someone else.
+    expect(telHref("0264595091 / 0264595092")).toBe("tel:0264595091");
+    expect(telHref("0264595091, 0722111222")).toBe("tel:0264595091");
+  });
+
+  it("links a number with an extra digit rather than hiding it", () => {
+    // `07411622014` is in the data. The dialler will fail; the user can read it.
+    expect(telHref("07411622014")).toBe("tel:07411622014");
+  });
+
+  it("has nothing to dial for an empty or junk value", () => {
+    // ANAF stores "" for 4,753 companies — not null, and not a phone number.
+    expect(telHref("")).toBeNull();
+    expect(telHref(null)).toBeNull();
+    expect(telHref("-")).toBeNull();
+    expect(telHref("N/A")).toBeNull();
   });
 });

@@ -75,6 +75,8 @@ export type ContactRow = {
     isRoleAddress: boolean;
   } | null;
   phone: string | null;
+  /** Street address, from ANAF. Shown next to the phone in the row detail. */
+  address: string | null;
   importedAt: Date;
   list: { id: string; name: string } | null;
   fitFeedback: FitFeedback | null;

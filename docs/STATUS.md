@@ -7,7 +7,9 @@ re-explained or re-derived. Update it when the answers change.
 - **Last commit:** `b4c7a4e` — the Bright Data probe, and what it ruled out.
 - **Green:** 971 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
 - **Data:** **17,156 companies** — 5,406 with a website, **16,850 (98.2%) with a
-  phone and a street address**, 9,455 enriched from ANAF. **29,551
+  street address** and **12,097 (70.5%) with a phone number** — ANAF stores an
+  empty string, not null, for the other 4,753, so `not null` overcounts it.
+  9,455 enriched from ANAF. **29,551
   decision-makers**, all with `first_name`/`last_name` resolved. **1,788 leads**
   across two agents, **1,094 signals** on 788 companies, best lead **91**.
 
@@ -113,7 +115,8 @@ because each looked obviously right beforehand.
 **FirmeAPI.ro (Romanian company data, ~€20/mo) — not bought.** Its headline is
 97% phone coverage and 40% websites. But ANAF had been returning `telefon` and
 `adresa` all along and we were discarding them for want of a column: adding two
-columns took phone coverage to **98.2% for free**, which deletes the main
+columns took phone coverage to **70.5% for free** (98.2% of rows carry the
+column; ANAF files `""` for a quarter of them), which deletes the main
 reason to subscribe. Its remaining pitch is `website` at 40% — measured across
 all 3M Romanian companies, where the ones *with* websites are exactly the ones
 ONRC already lists. `npm run measure:firme` is built and gated on the right
@@ -1082,8 +1085,10 @@ unsubscribe endpoint, Copilot.
 - **Check what the free source already returns before buying it.** `AnafCompany`
   had parsed `phone` and `address` since the first import and `enrich-registry.ts`
   dropped both for want of a column. Adding two columns took phone coverage from
-  0 to **98.2%**, free, and removed the main reason to subscribe to a vendor
-  selling exactly that at five credits a company. The parsed-but-discarded field
+  0 to **70.5%**, free, and removed the main reason to subscribe to a vendor
+  selling exactly that at five credits a company. (98.2% was the first number
+  reported here and it counted `phone = ""`, which ANAF files for 4,753
+  companies. `not null` is not the same predicate as "has one".) The parsed-but-discarded field
   is a recurring shape here; grep the client types before pricing a purchase.
 - **A vendor's quota is the truth; `CreditLedger` is an estimate.** Reoon began
   answering `403 {"reason":"Not enough credits available"}` while the ledger

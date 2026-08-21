@@ -291,6 +291,7 @@ export function demoDataset(now: Date = new Date()): DemoDataset {
       breakdown,
       email,
       phone: seed.phone,
+      address: `Str. Exemplu ${i + 1}, ${seed.county}`,
       importedAt: new Date(base.getTime() - HOUR - i * 47 * 60_000),
       list:
         seed.country === "RO"

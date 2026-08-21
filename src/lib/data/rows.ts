@@ -188,6 +188,8 @@ export function contactRowFrom(
      * indistinguishable from a fact until someone checks.
      */
     phone: optionalString(company?.phone) ?? null,
+    // Same payload, same omission: ANAF returns `adresa` alongside `telefon`.
+    address: optionalString(company?.address) ?? null,
     importedAt: optionalDate(row.created_at) ?? new Date(0),
     list: list
       ? {
@@ -245,4 +247,27 @@ export function activityEventFrom(row: Record<string, unknown>): ActivityEvent {
     kind: ACTIVITY_KINDS.includes(kind) ? kind : "launch",
     at: optionalDate(row.created_at) ?? new Date(0),
   };
+}
+
+/**
+ * A `tel:` href for a registry phone number, or null if there is nothing to dial.
+ *
+ * ANAF writes the number however the company filed it: `0264595091`,
+ * `021.351.35.30`, and occasionally two numbers in one field. A dialler needs
+ * digits, so the separators come out and only the first number survives —
+ * `tel:` takes one destination, and joining two together produces a third
+ * number that belongs to somebody else.
+ *
+ * Deliberately not validating length. `07411622014` is in the data with an
+ * extra digit, and a link that fails to connect is a better answer than hiding
+ * a number the user could have read and corrected themselves. The text stays
+ * exactly as filed for that reason; only the href is normalised.
+ */
+export function telHref(phone: string | null): string | null {
+  if (!phone) return null;
+  // Anything after a separator is a second number, not a continuation.
+  const first = phone.split(/[/,;]| sau /i)[0] ?? "";
+  const digits = first.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+  // Fewer than six digits cannot be a phone number — it is a filing artefact.
+  return digits.replace(/\D/g, "").length >= 6 ? `tel:${digits}` : null;
 }
