@@ -63,6 +63,20 @@ type ReoonResponse = {
 };
 
 /**
+ * Is this the vendor saying it is out of allowance, rather than the address
+ * being bad?
+ *
+ * Reoon signals it with `403` and a `reason` naming credits, not the `402` a
+ * reader would expect, so the status code alone is not enough to tell a billing
+ * stop from a permissions problem.
+ */
+function isQuotaError(status: number, payload: ReoonResponse): boolean {
+  if (status === 402 || status === 429) return true;
+  const text = `${payload.reason ?? ""} ${payload.error ?? ""}`.toLowerCase();
+  return status === 403 && /credit|quota|limit|recharge/.test(text);
+}
+
+/**
  * Both vocabularies, mapped onto ours.
  *
  * Power mode returns nine statuses, quick mode four, and they overlap only
@@ -112,6 +126,8 @@ export class ReoonVerifier implements MailboxVerifier {
 
   private readonly apiKey?: string;
   private readonly mode: ReoonMode;
+  /** Latched once the vendor reports no allowance left. */
+  private exhausted = false;
 
   /** Blank is unset — dotenv parses `KEY=` as `""`, not undefined. */
   constructor(apiKey?: string, mode?: string) {
@@ -128,9 +144,28 @@ export class ReoonVerifier implements MailboxVerifier {
     return Boolean(this.apiKey);
   }
 
+  /** True once the vendor has said it is out. Callers should stop the run. */
+  get quotaExhausted(): boolean {
+    return this.exhausted;
+  }
+
   async verify(address: string): Promise<VerificationVerdict> {
     if (!this.apiKey) {
       return { address, status: "unknown", reason: "REOON_API_KEY is not set." };
+    }
+
+    /*
+     * Do not call again once the vendor has said no. Every subsequent request
+     * costs a round trip, returns the same refusal, and looks like a verdict
+     * about a different address.
+     */
+    if (this.exhausted) {
+      return {
+        address,
+        status: "unknown",
+        reason: "Reoon reported no credits remaining; skipped without calling.",
+        quotaExhausted: true,
+      };
     }
 
     const url = new URL(ENDPOINT);
@@ -149,6 +184,25 @@ export class ReoonVerifier implements MailboxVerifier {
 
       if (!response.ok) {
         /*
+         * The vendor's own quota is the truth; our ledger is an estimate.
+         *
+         * `CreditLedger` counts one credit per call against a limit we wrote
+         * down from documentation. Reoon began answering
+         * `403 {"reason":"Not enough credits available"}` while that estimate
+         * still read 366 of 600 — so either the free tier is smaller than
+         * documented or a power-mode check costs more than one. Either way the
+         * local number was wrong and kept authorising calls.
+         *
+         * Latching here is what makes that survivable. Without it a bulk run
+         * makes hundreds of failing HTTP calls, maps each to `unknown`, and
+         * reports "0 verified" — which reads exactly like every address being
+         * bad. That happened: 198 calls after exhaustion, on a segment whose
+         * addresses were never actually checked.
+         */
+        if (isQuotaError(response.status, payload)) {
+          this.exhausted = true;
+        }
+        /*
          * `unknown`, not `invalid`. An exhausted quota or a bad key says
          * nothing about the address, and returning `invalid` would let a
          * billing problem quietly delete every candidate it touched.
@@ -156,7 +210,8 @@ export class ReoonVerifier implements MailboxVerifier {
         return {
           address,
           status: "unknown",
-          reason: payload.error ?? `${response.status} ${response.statusText}`,
+          reason: payload.error ?? payload.reason ?? `${response.status} ${response.statusText}`,
+          quotaExhausted: this.exhausted,
         };
       }
     } catch (error) {

@@ -53,6 +53,15 @@ const HARVEST_CONCURRENCY = 8;
 type Options = {
   limit?: number;
   orgId?: string;
+  /**
+   * Restrict to one agent's leads.
+   *
+   * Without it, `--limit` is spent in score order across every agent, and the
+   * leads with no domain — which cost nothing but consume a slot — crowd out
+   * the ones that can actually be enriched. When the budget is verification
+   * credits rather than time, aiming matters.
+   */
+  agentId?: string;
   force: boolean;
   dryRun: boolean;
   /** Harvest role addresses per company instead of resolving per lead. */
@@ -78,6 +87,9 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--org":
         options.orgId = next();
+        break;
+      case "--agent":
+        options.agentId = next();
         break;
       case "--force":
         options.force = true;
@@ -140,6 +152,7 @@ async function loadLeads(options: Options, orgId: string): Promise<EnrichableLea
      */
     if (!options.named) query = query.is("email_id", null);
 
+    if (options.agentId) query = query.eq("agent_id", options.agentId);
     if (!options.force) query = query.is("enriched_at", null);
 
     const { data, error } = await query;

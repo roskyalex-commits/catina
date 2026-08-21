@@ -536,6 +536,25 @@ export class EmailWaterfall {
         creditsSpent: 1,
       });
 
+      /*
+       * The vendor is out. Stop the whole chain, do not try the next guess.
+       *
+       * Without this the loop spends its remaining attempts collecting the same
+       * refusal, and every one is recorded as `unknown` — which the run then
+       * reports as "nothing verified", indistinguishable from every address
+       * being bad. It happened: 198 calls after exhaustion, and a segment whose
+       * addresses were never actually checked looked like a segment that failed.
+       */
+      if (verdict.quotaExhausted) {
+        attempts.push({
+          provider: verifier.key,
+          outcome: "skipped",
+          detail: "verifier is out of credits — remaining guesses not attempted",
+          creditsSpent: 0,
+        });
+        return null;
+      }
+
       if (verdict.status === "verified") {
         return {
           address: guess.address,

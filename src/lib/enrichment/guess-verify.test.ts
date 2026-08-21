@@ -130,6 +130,26 @@ describe("what stops it burning credits", () => {
     ).toBe(true);
   });
 
+  it("stops the whole chain when the vendor says it is out of credits", async () => {
+    /*
+     * Observed live: Reoon began answering 403 "Not enough credits available"
+     * while our own ledger still read 366 of 600. The loop kept going, mapped
+     * each refusal to `unknown`, and the run reported "0 verified" -- which
+     * reads exactly like every address being bad. 198 calls were spent that
+     * way on a segment whose addresses were never actually checked.
+     */
+    const verifier = verifierReturning(["unknown"], { quotaExhausted: true });
+    const result = await build(verifier).resolve(ANA);
+
+    expect(verifier.calls).toHaveLength(1);
+    expect(result.email).toBeNull();
+    expect(
+      result.attempts.some(
+        (a) => a.outcome === "skipped" && /out of credits/.test(a.detail ?? ""),
+      ),
+    ).toBe(true);
+  });
+
   it("does not start when the allowance is already spent", async () => {
     const verifier = verifierReturning(["verified"]);
     const result = await build(verifier, { verifier: 0 }).resolve(ANA);

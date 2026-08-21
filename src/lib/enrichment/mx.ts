@@ -230,6 +230,14 @@ export type VerificationVerdict = {
    * is the difference between spending a credit and skipping it.
    */
   isCatchAll?: boolean;
+  /**
+   * The vendor is out of allowance — this says nothing about the address.
+   *
+   * Distinct from `status: "unknown"`, which a caller may reasonably retry.
+   * A run that sees this should stop rather than spend the rest of its batch
+   * collecting identical refusals and reporting them as "nothing verified".
+   */
+  quotaExhausted?: boolean;
 };
 
 export interface MailboxVerifier {
