@@ -213,6 +213,21 @@ export type VerificationVerdict = {
 export interface MailboxVerifier {
   readonly key: string;
   readonly label: string;
+  /**
+   * Whether this verifier actually probes the individual mailbox.
+   *
+   * The distinction that decides whether guess-and-verify is allowed to run at
+   * all. A verifier that only checks syntax, MX and disposable lists answers
+   * "could this domain receive mail", which is true for every address at the
+   * domain — including one we invented. Promoting that to `verified` would mean
+   * marking every guess as confirmed and then sending to it, which is the
+   * single most expensive mistake available here and the one this file warns
+   * about at the top.
+   *
+   * False is not useless: such a verifier still catches spamtraps, disposable
+   * domains and dead domains on addresses we already know to be real.
+   */
+  readonly verifiesMailbox: boolean;
   isConfigured(): boolean;
   verify(address: string): Promise<VerificationVerdict>;
 }

@@ -432,6 +432,31 @@ export class EmailWaterfall {
     const verifier = this.deps.verifier;
     if (!verifier) return null;
 
+    /*
+     * A verifier that does not probe the mailbox cannot settle a guess.
+     *
+     * It would answer "yes" for every address at any live domain — including
+     * the ones we invented a moment ago — so running it here would confirm
+     * every guess, spend a credit doing it, and hand the send path an address
+     * nobody has established exists. That is strictly worse than returning
+     * nothing, because nothing is honest.
+     *
+     * Returning early rather than spending and discarding: the budget is 600 a
+     * month and this path would burn it learning what `MxChecker` already
+     * establishes for free.
+     */
+    if (!verifier.verifiesMailbox) {
+      attempts.push({
+        provider: verifier.key,
+        outcome: "skipped",
+        detail:
+          "cannot confirm a generated address — this verifier checks the domain, " +
+          "not the mailbox. Switch it to a mode that probes the inbox.",
+        creditsSpent: 0,
+      });
+      return null;
+    }
+
     for (const guess of guesses) {
       if (!(await this.deps.ledger.hasBudget(verifier.key))) {
         attempts.push({

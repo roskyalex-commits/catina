@@ -17,10 +17,11 @@ import { ReoonVerifier } from "./reoon";
 
 export type VerifierEnv = {
   REOON_API_KEY?: string;
+  REOON_MODE?: string;
 };
 
 export function allVerifiers(env: VerifierEnv): MailboxVerifier[] {
-  return [new ReoonVerifier(env.REOON_API_KEY)];
+  return [new ReoonVerifier(env.REOON_API_KEY, env.REOON_MODE)];
 }
 
 /** Configured providers, in preference order. */

@@ -248,7 +248,10 @@ export function buildWaterfall(
      * 25, so SMTP `RCPT TO` probing cannot happen in-process. That constraint
      * is why this is a vendor seam and not a function.
      */
-    verifier: preferredVerifier({ REOON_API_KEY: env.REOON_API_KEY }) ?? undefined,
+    verifier: preferredVerifier({
+      REOON_API_KEY: env.REOON_API_KEY,
+      REOON_MODE: env.REOON_MODE,
+    }) ?? undefined,
   });
 }
 

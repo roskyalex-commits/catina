@@ -307,6 +307,7 @@ describe("EmailWaterfall — verification", () => {
   const verifier = (status: "verified" | "invalid" | "risky"): MailboxVerifier => ({
     key: "verifier",
     label: "stub",
+    verifiesMailbox: true,
     isConfigured: () => true,
     verify: async (address) => ({ address, status }),
   });

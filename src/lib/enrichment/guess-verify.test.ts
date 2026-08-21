@@ -18,6 +18,7 @@ import { EmailWaterfall } from "./waterfall";
 function verifierReturning(
   verdicts: VerificationVerdict["status"][],
   extra: Partial<VerificationVerdict> = {},
+  verifiesMailbox = true,
 ): MailboxVerifier & { calls: string[] } {
   const calls: string[] = [];
   let index = 0;
@@ -25,6 +26,7 @@ function verifierReturning(
     key: "verifier",
     label: "stub",
     calls,
+    verifiesMailbox,
     isConfigured: () => true,
     verify: async (address) => {
       calls.push(address);
@@ -109,6 +111,25 @@ describe("what stops it burning credits", () => {
     expect(verifier.calls).toHaveLength(1);
   });
 
+  it("refuses to run at all on a verifier that only checks the domain", async () => {
+    /*
+     * Reoon's quick mode marks every address at a live domain valid, including
+     * invented ones. Running it here would confirm every guess and hand the
+     * send path an address nobody established exists — so it must not spend a
+     * credit or return a result.
+     */
+    const verifier = verifierReturning(["verified"], {}, false);
+    const result = await build(verifier).resolve(ANA);
+
+    expect(verifier.calls).toHaveLength(0);
+    expect(result.email).toBeNull();
+    expect(
+      result.attempts.some(
+        (a) => a.outcome === "skipped" && /not the mailbox/.test(a.detail ?? ""),
+      ),
+    ).toBe(true);
+  });
+
   it("does not start when the allowance is already spent", async () => {
     const verifier = verifierReturning(["verified"]);
     const result = await build(verifier, { verifier: 0 }).resolve(ANA);
@@ -126,6 +147,7 @@ describe("what stops it burning credits", () => {
     const verifier: MailboxVerifier = {
       key: "verifier",
       label: "stub",
+      verifiesMailbox: true,
       isConfigured: () => true,
       verify: vi.fn().mockRejectedValue(new Error("ECONNRESET")),
     };

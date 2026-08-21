@@ -66,6 +66,11 @@ const secretSchema = z.object({
   BRAVE_SEARCH_API_KEY: z.string().optional(),
   /** Mailbox verification. Without it, a generated address is never sendable. */
   REOON_API_KEY: z.string().optional(),
+  /**
+   * `power` (default) or `quick`. Only `power` probes the individual inbox, so
+   * only `power` can confirm a generated address — see `verifiers/reoon.ts`.
+   */
+  REOON_MODE: z.string().optional(),
 });
 
 const fullSchema = publicSchema.extend(secretSchema.shape);
@@ -161,6 +166,7 @@ export function describeEnv(bindings?: Record<string, unknown>) {
     "APIFY_PEOPLE_ACTOR",
     "BRAVE_SEARCH_API_KEY",
     "REOON_API_KEY",
+    "REOON_MODE",
   ] as const;
 
   return {

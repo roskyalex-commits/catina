@@ -100,6 +100,51 @@ describe("a failure must not look like a verdict", () => {
   });
 });
 
+describe("quick mode cannot confirm a mailbox, and says so", () => {
+  it("declares that it does not check the inbox", () => {
+    /*
+     * The property the waterfall gates on. Reoon's own docs: "all emails
+     * including non-existing ones from that domain will be marked as valid".
+     */
+    expect(new ReoonVerifier("k", "quick").verifiesMailbox).toBe(false);
+    expect(new ReoonVerifier("k", "power").verifiesMailbox).toBe(true);
+    expect(new ReoonVerifier("k").verifiesMailbox).toBe(true);
+  });
+
+  it("maps quick mode's `valid` to risky, never verified", async () => {
+    /*
+     * `valid` here means the domain accepts mail, which `MxChecker` already
+     * establishes for free. Mapping it to `verified` would mark every guessed
+     * address at every live domain as confirmed — so even a caller that forgot
+     * to check `verifiesMailbox` cannot get a confirmation out of quick mode.
+     */
+    respondWith({ status: "valid", mx_accepts_mail: true });
+    const verdict = await new ReoonVerifier("k", "quick").verify("ion@firma.ro");
+    expect(verdict.status).toBe("risky");
+  });
+
+  it("still catches the things MX records cannot reveal", async () => {
+    // What quick mode is actually for: screening addresses already known real.
+    for (const status of ["spamtrap", "disposable", "invalid"]) {
+      respondWith({ status });
+      const verdict = await new ReoonVerifier("k", "quick").verify("ion@firma.ro");
+      expect(verdict.status, status).toBe("invalid");
+    }
+  });
+
+  it("names the mode in the reason, so a `valid` cannot read as a confirmation", async () => {
+    respondWith({ status: "valid" });
+    const verdict = await new ReoonVerifier("k", "quick").verify("ion@firma.ro");
+    expect(verdict.reason).toContain("quick");
+  });
+
+  it("treats an unrecognised mode string as power", () => {
+    // Fail towards the mode that is safe to act on.
+    expect(new ReoonVerifier("k", "").verifiesMailbox).toBe(true);
+    expect(new ReoonVerifier("k", "turbo").verifiesMailbox).toBe(true);
+  });
+});
+
 describe("the registry", () => {
   it("treats a blank key as no key at all", () => {
     // dotenv parses `REOON_API_KEY=` as `""`, and `.env.example` ships it blank.
@@ -113,6 +158,13 @@ describe("the registry", () => {
 
   it("selects Reoon when its key is present", () => {
     expect(preferredVerifier({ REOON_API_KEY: "k" })?.key).toBe("reoon");
+  });
+
+  it("passes the mode through from the environment", () => {
+    expect(
+      preferredVerifier({ REOON_API_KEY: "k", REOON_MODE: "quick" })?.verifiesMailbox,
+    ).toBe(false);
+    expect(preferredVerifier({ REOON_API_KEY: "k" })?.verifiesMailbox).toBe(true);
   });
 
   it("lists unconfigured providers so a setup screen can name them", () => {

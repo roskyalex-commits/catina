@@ -8,8 +8,8 @@ import type { MailboxVerifier, VerificationVerdict } from "../mx";
  * This is the component that makes the rest of the email work shippable. The
  * waterfall's standing rule is that a pattern-generated address is never
  * returned as the sendable `email` — only a vendor or a mailbox check may
- * promote it — so without a verifier the product generates addresses nobody is
- * allowed to send to.
+ * promote it — so without a verifier the product generates addresses and then
+ * refuses to use any of them.
  *
  * A local implementation is impossible rather than merely inconvenient.
  * Mailbox-level verification needs an SMTP `RCPT TO` probe on port 25;
@@ -17,60 +17,92 @@ import type { MailboxVerifier, VerificationVerdict } from "../mx";
  * and essentially every residential ISP blocks it too. So the choice is a
  * vendor or nothing.
  *
- * Reoon specifically: 600 verifications a month on the free tier with no card,
- * which is enough to prove the chain end to end on the leads that are actually
- * reachable today, and $9/month for 500/day after that.
- *
  * REST rather than a client library, matching `llm/gemini.ts` — one GET, and
  * the deploy target is Workers where every dependency is bundle weight.
+ *
+ * ## The two modes are not interchangeable
+ *
+ * `power` opens an SMTP conversation and asks about the specific recipient. It
+ * is the only mode that can tell a real mailbox from an invented one, and
+ * therefore the only mode guess-and-verify can use.
+ *
+ * `quick` checks syntax, MX, disposable and spamtrap lists in under half a
+ * second. Reoon's own documentation is explicit about the consequence:
+ *
+ *   > If the domain, syntax and a few other things are good, all emails
+ *   > including non-existing ones from that domain will be marked as valid.
+ *
+ * So a `valid` from quick mode says "this domain can receive mail" — which we
+ * already establish for free in `MxChecker`. Against a *guessed* address it is
+ * worse than useless: it would confirm every guess at every live domain, and
+ * `verifiesMailbox` exists to stop that at the type level rather than in a
+ * comment.
+ *
+ * Quick mode still earns its place on addresses we already know are real — a
+ * crawled `office@` can still be a spamtrap or sit on a dead domain, and
+ * neither is something MX records reveal.
  */
 
 const ENDPOINT = "https://emailverifier.reoon.com/api/v1/verify";
-/**
- * `power`, not `quick`.
- *
- * `quick` is syntax, disposable lists and MX — all of which we already do for
- * free in `MxChecker`, so paying a credit for it would buy nothing. `power` is
- * the one that actually probes the mailbox and reports catch-all, which is the
- * only reason to be here.
- */
-const MODE = "power";
+export type ReoonMode = "quick" | "power";
+const DEFAULT_MODE: ReoonMode = "power";
 /** Power mode probes a real SMTP conversation, so it is not fast. */
-const TIMEOUT_MS = 45_000;
+const POWER_TIMEOUT_MS = 45_000;
+/** Quick mode is documented at well under a second; something is wrong past this. */
+const QUICK_TIMEOUT_MS = 10_000;
 
 type ReoonResponse = {
   status?: string;
   is_catch_all?: boolean;
   is_disposable?: boolean;
   is_role_account?: boolean;
+  is_spamtrap?: boolean;
   mx_accepts_mail?: boolean;
   reason?: string;
   error?: string;
 };
 
 /**
- * Reoon's power-mode vocabulary, mapped onto ours.
+ * Both vocabularies, mapped onto ours.
+ *
+ * Power mode returns nine statuses, quick mode four, and they overlap only
+ * partly — `valid` is quick-only and `safe` is power-only, which is a useful
+ * accident: a `valid` reaching code that expected `safe` cannot be mistaken for
+ * a mailbox confirmation.
  *
  * The mapping that matters is `catch_all`. A catch-all domain accepts every
  * recipient, so the probe succeeded and proved nothing — calling that
- * `verified` is precisely the mistake `mx.ts` warns about at the top of the
- * file, and it is how a sending domain's reputation gets spent on addresses
- * that were never real. It becomes `risky`, and the caller must not auto-send.
+ * `verified` is precisely the mistake `mx.ts` warns about, and it is how a
+ * sending domain's reputation gets spent on addresses that were never real.
  */
 const STATUS_MAP: Record<string, VerificationVerdict["status"]> = {
+  // --- power mode ---------------------------------------------------------
   safe: "verified",
   // Reoon reports a confirmed role mailbox under its own label rather than
   // `safe`. It still completed the check, and role addresses are the ones this
   // product prefers for Romanian outreach anyway.
   role_account: "verified",
-  invalid: "invalid",
   disabled: "invalid",
-  spamtrap: "invalid",
-  // Deliverable, but sending there is how a list gets flagged.
-  disposable: "invalid",
   // The mailbox exists and is bouncing. Real, but not sendable today.
   inbox_full: "risky",
   catch_all: "risky",
+
+  // --- quick mode ---------------------------------------------------------
+  /*
+   * Deliberately `risky`, not `verified`.
+   *
+   * Quick mode marks every address at a live domain valid, so this carries no
+   * information about the mailbox. `risky` is the honest reading: the domain
+   * works, the recipient is unconfirmed. Anything stronger would let a caller
+   * that forgot to check `verifiesMailbox` send to a guess.
+   */
+  valid: "risky",
+
+  // --- both ---------------------------------------------------------------
+  invalid: "invalid",
+  spamtrap: "invalid",
+  // Deliverable, but sending there is how a list gets flagged.
+  disposable: "invalid",
   unknown: "unknown",
 };
 
@@ -79,10 +111,17 @@ export class ReoonVerifier implements MailboxVerifier {
   readonly label = "Reoon (REOON_API_KEY)";
 
   private readonly apiKey?: string;
+  private readonly mode: ReoonMode;
 
   /** Blank is unset — dotenv parses `KEY=` as `""`, not undefined. */
-  constructor(apiKey?: string) {
+  constructor(apiKey?: string, mode?: string) {
     this.apiKey = apiKey?.trim() || undefined;
+    this.mode = mode?.trim() === "quick" ? "quick" : DEFAULT_MODE;
+  }
+
+  /** Only power mode looks at the individual inbox. See the note above. */
+  get verifiesMailbox(): boolean {
+    return this.mode === "power";
   }
 
   isConfigured(): boolean {
@@ -97,10 +136,11 @@ export class ReoonVerifier implements MailboxVerifier {
     const url = new URL(ENDPOINT);
     url.searchParams.set("email", address);
     url.searchParams.set("key", this.apiKey);
-    url.searchParams.set("mode", MODE);
+    url.searchParams.set("mode", this.mode);
 
+    const timeout = this.mode === "quick" ? QUICK_TIMEOUT_MS : POWER_TIMEOUT_MS;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeout);
 
     let payload: ReoonResponse;
     try {
@@ -125,7 +165,7 @@ export class ReoonVerifier implements MailboxVerifier {
         status: "unknown",
         reason:
           error instanceof Error && error.name === "AbortError"
-            ? `Reoon did not answer within ${TIMEOUT_MS / 1000}s.`
+            ? `Reoon did not answer within ${timeout / 1000}s.`
             : String(error),
       };
     } finally {
@@ -138,10 +178,10 @@ export class ReoonVerifier implements MailboxVerifier {
     return {
       address,
       status,
-      // The vendor's own word, kept verbatim: `catch_all` and `disabled` both
-      // map to statuses that hide which one happened, and that is exactly what
-      // someone debugging a lead needs to see.
-      reason: payload.reason ? `${raw}: ${payload.reason}` : raw,
+      // The vendor's own word and the mode, kept verbatim: `catch_all` and
+      // `disabled` both map to statuses that hide which one happened, and a
+      // `valid` needs its mode attached or it reads like a confirmation.
+      reason: `${this.mode}/${raw}${payload.reason ? `: ${payload.reason}` : ""}`,
       isCatchAll: payload.is_catch_all,
     };
   }
