@@ -474,6 +474,30 @@ async function main() {
   );
   if (attempted.length === 0) return;
 
+  /*
+   * A dry run must not spend the quota.
+   *
+   * This check used to sit after the search loop, guarding only the write — so
+   * `--dry-run --search` ran every query and then declined to save the answers.
+   * It cost this account its whole monthly Brave allowance in one command:
+   * 746 searches to preview what 746 searches would do.
+   *
+   * Nothing below this line is free. The searches are the expensive part; the
+   * write is not.
+   */
+  if (options.dryRun) {
+    console.log(
+      `Dry run — stopping before any search.\n\n` +
+        `  ${attempted.length} companies would be looked up` +
+        (options.search ? `, at ~1 Brave query each.` : `, by name guess (free).`) +
+        `\n`,
+    );
+    for (const company of attempted.slice(0, 15)) {
+      console.log(`  ${company.name}`);
+    }
+    return;
+  }
+
   const run = (company: Company) => discover(company, options);
   const found = (
     options.search
@@ -510,10 +534,6 @@ async function main() {
     );
   }
 
-  if (options.dryRun) {
-    console.log("\nDry run — nothing was written.");
-    return;
-  }
 
   // `companies.domain` is unique, so a domain already claimed by another
   // company is left alone rather than failing the batch.

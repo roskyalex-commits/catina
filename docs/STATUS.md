@@ -41,6 +41,10 @@ re-explained or re-derived. Update it when the answers change.
   a 2025 revenue figure**. `scan:signals` and `rescore:leads` have *not* been
   re-run since, so those filings sit in the table without having become
   `anaf_growth` signals. That is the cheapest score improvement available.
+- **Domain discovery by search is dead too.** Brave scored 8.3% on companies
+  that already had a domain and **0.1% on the 746 lead companies that do not**.
+  The first number was measured on a population biased toward findable
+  companies and does not transfer. See "Domains are the real ceiling".
 - **Next, in rough order of value:** get a `REOON_API_KEY` (600/month free, the
   empty slot is already in `.env.local`) — without it a generated address is
   never sendable and this whole line of work stops one step short; then re-scan
@@ -185,18 +189,44 @@ blocks the first send.**
 Only **178 of 924 leads** sit at a company with a known domain. No domain means
 no address to build at all, so a perfect email engine still caps at 178 leads.
 
-`BRAVE_SEARCH_API_KEY` is now set, and `npm run discover:domains -- --measure`
-has run for the first time:
+`BRAVE_SEARCH_API_KEY` is set, and `npm run discover:domains` has now run for
+the first time — twice, and **the two runs disagree by two orders of
+magnitude.** That disagreement is the finding.
 
-| | |
-|---|---|
-| recall — search proposed the right domain | **28.3%** |
-| CUI-provable — the verifier would accept it | **8.3%** |
-| name guessing, for comparison | 47% recall, **0** accepted |
+| run | population | CUI-provable |
+|---|---|---|
+| `--measure --limit 60` | companies that **already have** a domain | **8.3%** (recall 28.3%) |
+| `--search --leads` | the 746 lead companies that **have none** | **0.1%** — 1 of 746 |
+| name guessing, earlier | companies that already have a domain | 47% recall, **0** accepted |
 
-8.3% is low, but it is the only thing that works and it is free. The binding
-constraint is the 2,000-query monthly tier, so **spend it on companies that
-already have leads** (`--search --leads`) rather than on all 11,750 blind.
+**The 8.3% does not transfer, and it never could have.** `--measure` works
+against companies whose domain the register already carries, because that is
+the only way to know the right answer in advance. But carrying a domain in the
+register *is* evidence of a web presence — so the measurement population is
+biased by construction toward companies that are findable. The companies we
+actually need domains for are the ones with no web presence, and for them the
+answer is 0.1%.
+
+This is the same trap already recorded for keyword→company discovery: a number
+measured on one population is not a number about another. It was quoted here as
+if it were, for one commit.
+
+**So domain discovery by search is dead for this purpose**, the same way name
+guessing is. The 178-of-924 ceiling stands, and lifting it needs a different
+inlet — a source that lists businesses *with* their websites, rather than a
+search engine asked to find one. OpenStreetMap Overpass is the free candidate
+worth measuring next; it is free, needs no key, and carries `website` and
+`contact:email` tags for businesses that bothered to be mapped.
+
+**Two cost landmines came out of this run**, both now fixed or recorded:
+
+- `--dry-run` guarded only the *write*, not the searches, so
+  `--search --leads --dry-run` ran 746 real queries to preview what 746 queries
+  would do. It now returns before spending anything.
+- The key is not on the free tier. Brave reports
+  `plan: Search, usage_limit: 5.0 monthly`, and that $5 is now spent —
+  `402 USAGE_LIMIT_EXCEEDED`. Further Brave work waits for the month to roll
+  over, and given 0.1% there is no reason to hurry.
 
 ## The two constant zeros
 
@@ -860,6 +890,16 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **A hit rate measured on companies that already have a domain says nothing
+  about companies that do not.** `--measure` can only run where the right
+  answer is already known, which restricts it to companies with a web presence —
+  exactly the ones search finds easily. Brave scored 8.3% there and **0.1%** on
+  the population that actually needs domains. Any "measured" number here must
+  name its population, or it will be quoted about the wrong one.
+- **A `--dry-run` that calls a metered API is not a dry run.** `discover-domains`
+  guarded the write and not the searches, and one preview command spent the
+  whole monthly Brave allowance. If you add a flag like this, put the guard
+  before the spend, not before the insert.
 - **There are two name splitters, and reaching for the familiar one is a bug.**
   `splitFullName` in `patterns.ts` reads given-name-first and is correct for
   vendors and team pages. `resolveNameParts` in `romanian-names.ts` consults
