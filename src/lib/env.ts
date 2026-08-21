@@ -73,6 +73,8 @@ const secretSchema = z.object({
   REOON_MODE: z.string().optional(),
   /** FirmeAPI.ro — Romanian company contact data. 1,000 free credits, no card. */
   FIRMEAPI_KEY: z.string().optional(),
+  /** Bright Data Web Scraper API — LinkedIn profiles. 5,000 free credits/month. */
+  BRIGHTDATA_API_KEY: z.string().optional(),
 });
 
 const fullSchema = publicSchema.extend(secretSchema.shape);
@@ -170,6 +172,7 @@ export function describeEnv(bindings?: Record<string, unknown>) {
     "REOON_API_KEY",
     "REOON_MODE",
     "FIRMEAPI_KEY",
+    "BRIGHTDATA_API_KEY",
   ] as const;
 
   return {
