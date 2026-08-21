@@ -53,10 +53,10 @@ const PAGE = 1000;
 const DEFAULT_TARGET = 150;
 const DEFAULT_CONTROL = 30;
 
-type Options = { limit: number; control: number };
+type Options = { limit: number; control: number; probe: boolean };
 
 function parseArgs(argv: string[]): Options {
-  const options: Options = { limit: DEFAULT_TARGET, control: DEFAULT_CONTROL };
+  const options: Options = { limit: DEFAULT_TARGET, control: DEFAULT_CONTROL, probe: false };
   for (let i = 0; i < argv.length; i += 1) {
     const next = () => argv[(i += 1)];
     switch (argv[i]) {
@@ -65,6 +65,9 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--control":
         options.control = Number(next());
+        break;
+      case "--probe":
+        options.probe = true;
         break;
       default:
         if (argv[i].startsWith("--")) throw new Error(`Unknown flag: ${argv[i]}`);
@@ -257,6 +260,41 @@ async function main() {
     process.exit(1);
   }
 
+  /*
+   * Look at one raw response before trusting a hundred tallies.
+   *
+   * The response shape here is coded from published documentation, not from
+   * observation, and a field-name mismatch would report 0% coverage — which
+   * reads exactly like a vendor with no data and would get a good source
+   * dropped. Five credits to remove that doubt is the cheapest check available.
+   */
+  if (options.probe) {
+    const [company] = await load(false, 1);
+    if (!company) {
+      console.error("No domainless company to probe.");
+      process.exit(1);
+    }
+    console.log(`Probing ${company.name} (CUI ${company.cui})\n`);
+    const parsed = await firme.fetchContact(company.cui);
+
+    console.log("raw response:");
+    console.log(JSON.stringify(firme.lastPayload(), null, 2).slice(0, 3000));
+    console.log("\nparsed by our client:");
+    console.log(JSON.stringify(parsed, null, 2));
+
+    if (firme.unparsedCount() > 0) {
+      console.log(
+        "\n  The response did not match the expected shape. Compare the raw\n" +
+          "  payload above with contactSchema in src/lib/sources/firme/client.ts\n" +
+          "  and fix the field names BEFORE running the full measurement — every\n" +
+          "  number it printed would otherwise be a zero caused by our parser.",
+      );
+    }
+
+    console.log(`\ncredits spent: ${firme.spent()}`);
+    return;
+  }
+
   const targets = await load(false, options.limit);
   const control = await load(true, options.control);
 
@@ -273,6 +311,14 @@ async function main() {
 
   await measure("domainless", targets, domainless, samples);
   await measure("control", control, known, samples);
+
+  if (firme.unparsedCount() > 0) {
+    console.log(
+      `\n  WARNING: ${firme.unparsedCount()} responses came back 200 but did not\n` +
+        `  match the expected shape. Those counted as misses, so every figure\n` +
+        `  below understates the vendor. Run with --probe and fix contactSchema.`,
+    );
+  }
 
   report("DOMAINLESS — this is the number that decides", domainless);
   report("CONTROL — companies whose domain we already hold", known);

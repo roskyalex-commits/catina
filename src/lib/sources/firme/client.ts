@@ -42,15 +42,64 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** Politeness, and cheap insurance against a per-second cap we cannot see. */
 const MIN_REQUEST_INTERVAL_MS = 250;
 
+/**
+ * Unwrap the response envelope, if there is one.
+ *
+ * An unauthenticated probe returns `{"success":false,"error":"Unauthenticated",…}`,
+ * so this API wraps its payloads — a success is almost certainly
+ * `{success: true, data: {…}}` rather than the bare object the published
+ * examples show.
+ *
+ * That distinction decides whether the measurement is worth anything. A parser
+ * expecting the bare shape would fail on every response, `fetchContact` would
+ * return null each time, the tally would count 200 misses, and the report would
+ * say 0% coverage — and we would drop a vendor for a bug in our own client.
+ * Accepting both shapes costs one line and removes that failure mode entirely.
+ */
+function unwrap(payload: unknown): unknown {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const record = payload as Record<string, unknown>;
+    for (const key of ["data", "result", "firma", "company"]) {
+      const inner = record[key];
+      if (inner && typeof inner === "object") return inner;
+    }
+  }
+  return payload;
+}
+
+/**
+ * One value or many, accepted either way.
+ *
+ * The documented examples show arrays, but a single-valued field arriving as a
+ * bare string is the commonest shape difference there is, and it would fail the
+ * parse for the whole company. Since a parse failure reads as "no data" in the
+ * tally, being strict here would cost coverage the vendor actually has.
+ */
+const listOfStrings = z
+  .union([z.array(z.string()), z.string()])
+  .optional()
+  .transform((value) => (typeof value === "string" ? [value] : (value ?? [])));
+
 const contactSchema = z
   .object({
     cui: z.union([z.number(), z.string()]).optional(),
-    telefon: z.array(z.string()).optional(),
-    email: z.array(z.string()).optional(),
-    website: z.array(z.string()).optional(),
-    fax: z.array(z.string()).optional(),
+    telefon: listOfStrings,
+    email: listOfStrings,
+    website: listOfStrings,
+    fax: listOfStrings,
     persoane_contact: z
-      .array(z.object({ nume: z.string().optional(), rol: z.string().optional() }).loose())
+      .array(
+        z
+          .object({
+            nume: z.string().optional(),
+            // `functie` is at least as likely as `rol` for a Romanian API, and
+            // the role is the field the job-title question turns on — losing it
+            // to a name mismatch would answer that question wrongly.
+            rol: z.string().optional(),
+            functie: z.string().optional(),
+          })
+          .loose(),
+      )
       .optional(),
   })
   .loose();
@@ -93,6 +142,8 @@ export class FirmeApiClient {
   private readonly apiKey?: string;
   private queue: Promise<unknown> = Promise.resolve();
   private creditsSpent = 0;
+  private unparsed = 0;
+  private lastRaw: unknown = null;
 
   /** Blank is unset — dotenv parses `KEY=` as `""`, not undefined. */
   constructor(apiKey?: string) {
@@ -109,6 +160,22 @@ export class FirmeApiClient {
   }
 
   /**
+   * Responses that came back 200 but did not match the expected shape.
+   *
+   * Non-zero means the field names have moved and every number in the report is
+   * wrong — a distinct failure from "the vendor has no data", and the one that
+   * would otherwise be invisible.
+   */
+  unparsedCount(): number {
+    return this.unparsed;
+  }
+
+  /** The last raw payload, for `--probe`: see the shape before trusting a tally. */
+  lastPayload(): unknown {
+    return this.lastRaw;
+  }
+
+  /**
    * Contact channels for one company.
    *
    * Returns null when the vendor has no record, which is a real answer and not
@@ -119,13 +186,19 @@ export class FirmeApiClient {
       throw new FirmeApiError("FIRMEAPI_KEY is not set.");
     }
 
-    const payload = await this.enqueue(`${BASE_URL}/datecontact/${encodeURIComponent(cui)}`);
-    if (payload === null) return null;
+    const raw = await this.enqueue(`${BASE_URL}/datecontact/${encodeURIComponent(cui)}`);
+    if (raw === null) return null;
 
-    const parsed = contactSchema.safeParse(payload);
+    this.lastRaw = raw;
+    const parsed = contactSchema.safeParse(unwrap(raw));
     if (!parsed.success) {
-      // A shape we do not recognise is a miss, not a crash: one renamed field
-      // must not stop a 200-company measurement.
+      /*
+       * Counted, not swallowed. A renamed field must not stop a 200-company
+       * run — but it must not look like the vendor having no data either, or
+       * the report says 0% coverage and we drop a vendor over our own parser.
+       * `unparsed()` lets the caller see the difference.
+       */
+      this.unparsed += 1;
       return null;
     }
 
@@ -138,7 +211,7 @@ export class FirmeApiClient {
       people: (data.persoane_contact ?? [])
         .map((person) => ({
           name: (person.nume ?? "").trim(),
-          role: person.rol?.trim() || undefined,
+          role: (person.rol ?? person.functie)?.trim() || undefined,
         }))
         .filter((person) => person.name.length > 0),
     };
