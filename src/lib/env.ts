@@ -71,6 +71,8 @@ const secretSchema = z.object({
    * only `power` can confirm a generated address — see `verifiers/reoon.ts`.
    */
   REOON_MODE: z.string().optional(),
+  /** FirmeAPI.ro — Romanian company contact data. 1,000 free credits, no card. */
+  FIRMEAPI_KEY: z.string().optional(),
 });
 
 const fullSchema = publicSchema.extend(secretSchema.shape);
@@ -167,6 +169,7 @@ export function describeEnv(bindings?: Record<string, unknown>) {
     "BRAVE_SEARCH_API_KEY",
     "REOON_API_KEY",
     "REOON_MODE",
+    "FIRMEAPI_KEY",
   ] as const;
 
   return {

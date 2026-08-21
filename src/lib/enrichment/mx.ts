@@ -43,14 +43,36 @@ const MX_RECORD_TYPE = 15;
 const DOH_ENDPOINT = "https://cloudflare-dns.com/dns-query";
 const TIMEOUT_MS = 8_000;
 
-/** Free public mailbox providers — an address here proves nothing about a company. */
-const FREE_MAIL_DOMAINS = new Set([
+/**
+ * Free public mailbox providers — an address here proves nothing about a company.
+ *
+ * Exported because "is this a corporate domain or a consumer mailbox" is asked
+ * in more than one place, and the answer has to be the same everywhere. A
+ * Romanian SMB publishing `firma@yahoo.ro` gives us a way to reach them and no
+ * website to crawl, which is a materially different lead from one on its own
+ * domain — see `isFreeMailDomain` below.
+ */
+export const FREE_MAIL_DOMAINS = new Set([
   "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.uk", "hotmail.com",
   "outlook.com", "live.com", "msn.com", "aol.com", "icloud.com", "me.com",
   "proton.me", "protonmail.com", "gmx.com", "mail.com", "yandex.com",
   // Romanian consumer providers, still in wide use for small businesses.
   "yahoo.ro", "gmail.ro", "mail.ru", "rdslink.ro", "clicknet.ro",
 ]);
+
+/**
+ * Is this address on a consumer mailbox provider rather than a company domain?
+ *
+ * Load-bearing for deciding what a contact-data vendor is actually worth. A
+ * vendor reporting "78% email coverage" is quoting every address it holds; the
+ * share of those that imply a crawlable company domain is a different and much
+ * smaller number, and it is the one that decides whether the subscription pays
+ * for itself.
+ */
+export function isFreeMailDomain(address: string): boolean {
+  const domain = address.split("@").pop()?.trim().toLowerCase();
+  return domain ? FREE_MAIL_DOMAINS.has(domain) : false;
+}
 
 export type MxResult = {
   domain: string;
