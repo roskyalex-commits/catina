@@ -7,6 +7,7 @@ import {
   isPlausibleEmail,
   isRoleAddress,
   splitFullName,
+  type EmailCandidate,
   type EmailPattern,
 } from "./patterns";
 
@@ -342,14 +343,41 @@ export class EmailWaterfall {
       }
     }
 
-    // --- Last resort: unverified guesses ------------------------------------
-    // Returned as alternatives only, never as `email`. A guess must reach a
-    // human before it reaches a mailbox.
+    // --- Last resort: guess the convention, and let the mailbox settle it ----
+    /*
+     * The step that makes a domain with no learned convention reachable.
+     *
+     * Most Romanian SMBs publish `office@` and nothing else, so per-company
+     * inference fires on about 2.5% of domains (measured — see docs/STATUS.md).
+     * For the rest there is no evidence to read, only the prevalence order in
+     * `PATTERNS_BY_PREVALENCE`, which leads with `first.last`.
+     *
+     * A guess is not an answer. But a guess a mailbox *confirms* is, and that
+     * is what the competitor appears to do: apply `first.last` everywhere and
+     * let delivery sort it out. Verifying is the difference between doing that
+     * responsibly and spraying.
+     *
+     * Without a verifier these stay `alternatives` and never become `email` —
+     * unchanged behaviour, and the reason the product degrades safely when no
+     * key is set.
+     */
     if (!best) {
       const guesses = generateCandidates(input.fullName, input.domain, {
         parts: input.nameParts,
         max: 3,
       });
+
+      if (this.deps.verifier && guesses.length > 0) {
+        const promoted = await this.verifyGuesses(guesses, attempts, mxValid);
+        if (promoted) {
+          return {
+            email: promoted,
+            attempts,
+            alternatives: dedupe(candidates, promoted),
+          };
+        }
+      }
+
       for (const guess of guesses) {
         candidates.push({
           address: guess.address,
@@ -374,6 +402,87 @@ export class EmailWaterfall {
     }
 
     return { email: best, attempts, alternatives: dedupe(candidates, best) };
+  }
+
+  /**
+   * Try the likeliest conventions against the mailbox, best first.
+   *
+   * Returns the first one the verifier confirms, or null when none is
+   * confirmed — in which case the caller keeps them as unsendable alternatives.
+   *
+   * Two economies matter here, because the free tier is 600 checks a month and
+   * this is the step that would otherwise eat it:
+   *
+   * **Catch-all stops the loop.** If the first address comes back `catch_all`,
+   * the host accepts every recipient and the second and third guesses would
+   * return exactly the same non-answer. Trying them spends two more credits to
+   * learn nothing, so the loop stops and the domain is recorded as
+   * unconfirmable.
+   *
+   * **`invalid` is progress, `unknown` is not.** A rejected recipient means the
+   * next convention is worth trying. An `unknown` means the check itself failed
+   * — the quota, the network, the vendor — and hammering it with two more
+   * addresses turns one failure into three.
+   */
+  private async verifyGuesses(
+    guesses: readonly EmailCandidate[],
+    attempts: WaterfallAttempt[],
+    mxValid: boolean | undefined,
+  ): Promise<ResolvedEmail | null> {
+    const verifier = this.deps.verifier;
+    if (!verifier) return null;
+
+    for (const guess of guesses) {
+      if (!(await this.deps.ledger.hasBudget(verifier.key))) {
+        attempts.push({
+          provider: verifier.key,
+          outcome: "skipped",
+          detail: "monthly verification allowance exhausted",
+          creditsSpent: 0,
+        });
+        return null;
+      }
+
+      let verdict;
+      try {
+        verdict = await verifier.verify(guess.address);
+      } catch (error) {
+        attempts.push({
+          provider: verifier.key,
+          outcome: "error",
+          detail: error instanceof Error ? error.message : String(error),
+          creditsSpent: 0,
+        });
+        return null;
+      }
+      await this.deps.ledger.spend(verifier.key);
+
+      attempts.push({
+        provider: verifier.key,
+        outcome: verdict.status === "verified" ? "hit" : "miss",
+        detail: `${guess.pattern}: ${verdict.reason ?? verdict.status}`,
+        creditsSpent: 1,
+      });
+
+      if (verdict.status === "verified") {
+        return {
+          address: guess.address,
+          status: "verified",
+          // A confirmed mailbox is a confirmed mailbox however it was arrived
+          // at — the guess is no longer load-bearing once the check passed.
+          confidence: 0.95,
+          provider: "pattern-verified",
+          isRoleAddress: false,
+          pattern: guess.pattern,
+          mxValid,
+        };
+      }
+
+      if (verdict.isCatchAll || verdict.status === "risky") return null;
+      if (verdict.status === "unknown") return null;
+    }
+
+    return null;
   }
 
   private inferPattern(
