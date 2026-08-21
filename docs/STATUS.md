@@ -1068,6 +1068,17 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **One unreproduced test failure, recorded rather than explained away.** A full
+  run reported `1 failed | 970 passed` once and has since passed **seven**
+  consecutive times with no detail captured. Prime suspects are the two suites
+  that spy on `globalThis.fetch` — `verifiers/reoon.test.ts` and
+  `crawl/contact-harvest.test.ts` — though both restore in `afterEach`. If it
+  recurs, capture the name before re-running; a flake that is never named is a
+  bug that gets blamed on flakiness.
+- **`npm test | grep` does not gate a `&&` chain.** grep exits 0 when it matches
+  the summary line, so a red suite still lets the commit through. That is
+  exactly how the failure above got committed. Same trap as the earlier
+  `| tail -5 && git commit`. Gate on `npm test` alone.
 - **Check what the free source already returns before buying it.** `AnafCompany`
   had parsed `phone` and `address` since the first import and `enrich-registry.ts`
   dropped both for want of a column. Adding two columns took phone coverage from
