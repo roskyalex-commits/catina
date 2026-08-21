@@ -207,6 +207,62 @@ describe("a company mailbox does not block the search for the person", () => {
   });
 });
 
+describe("a disproved guess is not a finding about the lead", () => {
+  it("drops a learned-pattern address the mailbox rejects, keeping the role address", async () => {
+    /*
+     * Observed live: `paul.chetan@servicegest.ro` was built from the company's
+     * learned convention, came back invalid, was persisted as an invalid email
+     * and took a real 72-point lead to zero. Our own wrong guess is not
+     * evidence that the company is undeliverable.
+     */
+    const verifier = verifierReturning(["invalid"]);
+    const result = await build(verifier).resolve({
+      ...ANA,
+      knownRoleEmails: ["office@firma.ro"],
+      knownPattern: { pattern: "first.last", confidence: 0.8 },
+      // What `--named` sets. Below the pattern's own 0.8 the chain short-
+      // circuits and returns it unverified, which is a different path.
+      targetConfidence: 0.9,
+    });
+
+    expect(result.email?.status).not.toBe("invalid");
+    expect(result.email?.address).toBe("office@firma.ro");
+  });
+
+  it("returns no address at all rather than an invalid one", async () => {
+    const verifier = verifierReturning(["invalid"]);
+    const result = await build(verifier).resolve({
+      ...ANA,
+      knownPattern: { pattern: "first.last", confidence: 0.8 },
+      // What `--named` sets. Below the pattern's own 0.8 the chain short-
+      // circuits and returns it unverified, which is a different path.
+      targetConfidence: 0.9,
+    });
+
+    expect(result.email).toBeNull();
+  });
+
+  it("counts the check against the budget", async () => {
+    // This call used to be invisible to the ledger, so a bulk run could pass
+    // the free tier one lead at a time without the guard ever noticing.
+    const store = new MemoryUsageStore({ verifier: 600 });
+    const waterfall = new EmailWaterfall({
+      ledger: new CreditLedger(store, "org-1"),
+      verifier: verifierReturning(["verified"]),
+    });
+
+    await waterfall.resolve({
+      ...ANA,
+      knownPattern: { pattern: "first.last", confidence: 0.8 },
+      // What `--named` sets. Below the pattern's own 0.8 the chain short-
+      // circuits and returns it unverified, which is a different path.
+      targetConfidence: 0.9,
+    });
+
+    expect((await store.get("org-1", "verifier", currentMonth()))?.creditsUsed).toBe(1);
+  });
+});
+
 describe("without a verifier, nothing changes", () => {
   it("keeps guesses as alternatives and never returns one as the address", async () => {
     /*

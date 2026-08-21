@@ -4,8 +4,8 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `f20ffd8` — the crawler tells "unreadable" from "publishes nothing".
-- **Green:** 931 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
+- **Last commit:** `b8583ff` — verified named contacts, on a real key.
+- **Green:** 944 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
   decision-makers — now all with `first_name`/`last_name` resolved**, **401
   companies scanned for signals**, **9,455 enriched from ANAF** with **4,216
@@ -165,6 +165,38 @@ codeunit.ro   first.last  0.55  1 sample   cristina.petrache@codeunit.ro (Petrac
 
 Surname-first read correctly throughout, diacritics folded the way an address
 folds them.
+
+### It works. Eight verified named contacts, on a real key.
+
+`REOON_API_KEY` is set and power mode has run. The decisive test, four credits,
+on one domain:
+
+| mode | a real harvested address | an address we invented |
+|---|---|---|
+| **power** | `safe` | `invalid` |
+| **quick** | `valid` | `valid` |
+
+Power mode discriminates. Quick mode confirms a mailbox that does not exist,
+exactly as Reoon documents — which is why `verifiesMailbox` is false for it and
+guess-and-verify refuses to run on it. **Do not switch this to quick to raise
+the numbers; every extra address it produced would be fictional.**
+
+What the register now yields, from ONRC administrators plus a confirmed mailbox:
+
+```
+vlad.marusca@redbeesoftware.com   76 -> 87
+cristian.banu@certplus.ro         74 -> 85
+ionut.finta@itized.com            72 -> 83
+paula.ciudin@softservice.ro       verified   daniel.giurea@dapredi.ro     verified
+doina.toader@ttaudit.ro           verified   roxana.ene@accountable.ro    verified
+ovidiu.corutiu@ccfs.ro            verified
+```
+
+**8 verified named contacts, 168 of 600 credits, best lead 87.** Cost is ~1.7
+credits per lead, and the whole reachable population fits in the free tier.
+
+45 of 924 leads carry an address: 34 role, 11 named. The ceiling is still
+domains — only 178 leads have one at all.
 
 ### Verification is the load-bearing part, and it needs a key
 

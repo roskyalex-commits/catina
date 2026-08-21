@@ -309,10 +309,19 @@ export class EmailWaterfall {
      * by a third party that we have not independently confirmed — its `verified`
      * status reflects the vendor's confidence, not ours.
      */
-    if (best && best.provider !== "crawler" && this.deps.verifier) {
+    if (
+      best &&
+      best.provider !== "crawler" &&
+      this.deps.verifier &&
+      // Counted against the same 600 as `verifyGuesses`. Without this the
+      // budget guard could not see this call at all, and a bulk run would sail
+      // past the free tier one lead at a time.
+      (await this.deps.ledger.hasBudget(this.deps.verifier.key))
+    ) {
       const candidate = best;
       try {
         const verdict = await this.deps.verifier.verify(candidate.address);
+        await this.deps.ledger.spend(this.deps.verifier.key);
         attempts.push({
           provider: this.deps.verifier.key,
           outcome: verdict.status === "invalid" ? "miss" : "hit",
@@ -321,9 +330,26 @@ export class EmailWaterfall {
         });
 
         if (verdict.status === "invalid") {
-          // Demote rather than delete: the address may still be worth a
-          // human's judgement, but nothing should auto-send to it.
-          best = { ...candidate, status: "invalid", confidence: 0.05 };
+          /*
+           * A disproved guess is not a finding about the lead.
+           *
+           * An address *we generated* that the mailbox rejects is simply a
+           * wrong guess — it says nothing about the company, and keeping it as
+           * an `invalid` email marked the lead undeliverable and dropped a
+           * real 72-point lead to zero. Drop it and fall back to whatever else
+           * we have, which is usually the crawled `office@`.
+           *
+           * An address someone *else* asserted — a vendor's answer, or one read
+           * off the company's own page — is different. That one is demoted and
+           * kept, because a human may still want to see what was claimed.
+           */
+          if (candidate.provider === "pattern") {
+            const index = candidates.indexOf(candidate);
+            if (index >= 0) candidates.splice(index, 1);
+            best = bestOf(candidates);
+          } else {
+            best = { ...candidate, status: "invalid", confidence: 0.05 };
+          }
         } else if (verdict.status === "verified") {
           best = {
             ...candidate,
