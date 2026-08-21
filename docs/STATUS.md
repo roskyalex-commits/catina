@@ -4,8 +4,8 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `4d5e140` — guess-and-verify, suppressions, and the pattern prior measured.
-- **Green:** 923 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
+- **Last commit:** `f20ffd8` — the crawler tells "unreadable" from "publishes nothing".
+- **Green:** 931 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
   decision-makers — now all with `first_name`/`last_name` resolved**, **401
   companies scanned for signals**, **9,455 enriched from ANAF** with **4,216
@@ -120,11 +120,17 @@ address *and* the convention at once.
 
 **Then it was measured over 200 live Romanian sites, and the number is bad:**
 
-| | |
-|---|---|
-| reachable, any address | 36.5% |
-| published a personal address | 6.5% |
-| pattern confirmed by pairing | **0.5%** |
+| | first pass | after the crawler fixes |
+|---|---|---|
+| site could be read | — | **64.5%** |
+| published any address | 36.5% | 35.0% |
+| published a personal address | 6.5% → 3.5% | **8.6%** |
+| pattern known | 0.5% → 1.5% | **2.5%** |
+
+The middle column moved twice on purpose: 6.5% → 3.5% when `ROLE_PREFIXES` was
+widened and fourteen departmental addresses stopped being counted as personal,
+then 3.5% → 8.6% when `extractEmails` stopped discarding personal addresses on
+any page that also carried a role one. See the landmines.
 
 The reason is structural, not tuning. ONRC gives us the *administrator*; the
 address on a contact page belongs to whoever answers the phone. They are rarely
@@ -922,6 +928,25 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **A failed crawl is not an answer.** `fetchContactAddresses` returned a bare
+  array, so "we read the site and it publishes nothing" and "we could not read
+  the site" were indistinguishable — and the harvester recorded both as
+  settled. A degraded pass then reported **0.2%** of sites readable where the
+  same domains sampled fresh gave 15%, and buried 3,333 of them. It now returns
+  `pagesRead`, only stamps `checked` when a page was read, and warns when a run
+  reads under 20% of sites. **If a pass reports a reachability far off ~64%, do
+  not believe it — re-run at `--concurrency 4`.**
+- **`extractEmails` treats role addresses as a preference, not a filter.** With
+  no `roleOnly`, it returns role addresses *if any exist* and personal ones only
+  otherwise — so a contact page carrying `office@` alongside `ion.popescu@`
+  yields only `office@`. Correct for onboarding, silently fatal for the pattern
+  harvester, which exists for the personal address and looks at exactly the
+  pages where both appear. Pass `{ all: true }` when you want everything.
+  Doubled personal-address yield when fixed, 3.5% → 8.6%.
+- **Soft-404 sites eat the page budget.** Many Romanian sites return 200 with
+  the homepage for every unknown path, so `/contact`, `/contacte`, `/echipa`,
+  `/team` and `/despre-noi` all "succeed" with identical bytes and `/` is never
+  reached. Identical bodies no longer count against the budget.
 - **Record that you looked, not only that you found.** The harvester's skip
   list was keyed on `email_pattern` being set, so a resumed run re-crawled every
   domain that had already answered "nothing here" — 518 fresh crawls, zero new
