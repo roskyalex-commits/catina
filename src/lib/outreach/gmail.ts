@@ -183,6 +183,40 @@ export async function refreshAccessToken(options: {
   };
 }
 
+/**
+ * Which mailbox the user just connected.
+ *
+ * Asked of Google rather than of our own session, and the difference matters:
+ * a user signed into the app as one address can perfectly well authorise a
+ * different Gmail account on the consent screen. Storing the session email
+ * would label the row with an address the token cannot send as, and the
+ * mismatch would only surface as a bounced From header much later.
+ *
+ * `userinfo.email` is one of the scopes requested for exactly this.
+ */
+export async function fetchConnectedAddress(accessToken: string): Promise<string> {
+  const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!response.ok) {
+    throw new GmailError(
+      `Could not read which Google account was connected (${response.status}).`,
+      response.status,
+    );
+  }
+
+  const parsed = z
+    .object({ email: z.string().optional(), email_verified: z.boolean().optional() })
+    .loose()
+    .parse(await response.json());
+
+  if (!parsed.email) {
+    throw new GmailError("Google returned no email address for the connected account.");
+  }
+  return parsed.email;
+}
+
 export type SendResult = {
   messageId: string;
   threadId?: string;

@@ -25,6 +25,8 @@
     "harvest:patterns": "tsx scripts/harvest-patterns.ts",
     "scan:signals": "tsx scripts/scan-signals.ts",
     "rescore:leads": "tsx scripts/rescore-leads.ts",
+    "outreach:draft": "tsx scripts/draft-outreach.ts",
+    "outreach:send": "tsx scripts/send-outreach.ts",
     "measure:keyword-sourcing": "tsx scripts/measure-keyword-sourcing.ts",
     "measure:patterns": "tsx scripts/measure-email-patterns.ts",
     "measure:firme": "tsx scripts/measure-firme.ts",
