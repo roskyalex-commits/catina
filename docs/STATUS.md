@@ -4,13 +4,13 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `1974543` — the wizard runs end to end on a real site, with a real model key.
-- **Green:** 852 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
+- **Last commit:** `b11fbe2` — mailbox verification, and the chain wired end to end.
+- **Green:** 904 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
-  decision-makers**, **1,566 harvested email addresses**, **401 companies
-  scanned for signals**, **2,428 with both ANAF filing years**. `/app` renders
-  **924 leads**; **38 carry a real address**, **64 carry a signal**, and the
-  best scores **76** rather than the old flat 45.
+  decision-makers — now all with `first_name`/`last_name` resolved**, **401
+  companies scanned for signals**, **9,455 enriched from ANAF** with **4,216
+  carrying a 2025 revenue figure**. `/app` renders **924 leads**; **64 carry a
+  signal**, and the best scores **76** rather than the old flat 45.
 - **Two structural gaps are closed.** Contactability (20% of the score) and
   signals (35%) both used to contribute exactly zero. Both now work. Read
   "The two constant zeros" below before anything else.
@@ -30,10 +30,173 @@ re-explained or re-derived. Update it when the answers change.
 - **The plan is finished.** `C:\Users\rosky\.claude\plans\alright-let-s-for-keen-pascal.md`,
   Phases 0–5. All that remains of Phase 5 is `contact_job_change` from ONRC
   representative diffs, which needs a second export to diff against.
-- **Next, in rough order of value:** finish the ANAF financials pass (2,894
-  companies left, ~1.8h), re-scan and re-score so those filings become
-  `anaf_growth` signals, then Gmail OAuth — the only thing between this and a
-  lead actually being contacted.
+- **Named contacts, without LinkedIn.** The competitor finds a person on
+  LinkedIn and constructs `first.last@` at their employer. We already hold the
+  people — 29,551 administrators, from a legal filing rather than a scrape —
+  and the address generator was already written. Read "Real people, real
+  addresses" below: the headline is that **every address it would have built
+  was wrong**, because ONRC writes surnames first and the generator read them
+  last.
+- **The ANAF financials pass is done.** 9,455 companies enriched, **4,216 with
+  a 2025 revenue figure**. `scan:signals` and `rescore:leads` have *not* been
+  re-run since, so those filings sit in the table without having become
+  `anaf_growth` signals. That is the cheapest score improvement available.
+- **Next, in rough order of value:** get a `REOON_API_KEY` (600/month free, the
+  empty slot is already in `.env.local`) — without it a generated address is
+  never sendable and this whole line of work stops one step short; then re-scan
+  and re-score for the new ANAF filings; then Gmail OAuth.
+
+## Real people, real addresses, without LinkedIn
+
+The goal: a lead whose contact is a named person, not `office@firma.ro`. The
+reference product does it by finding the person on LinkedIn and constructing
+`first.last@` at their employer's domain — every address it produced for the
+user had exactly that shape.
+
+Most of that was already built here. `people` holds **29,551 named
+administrators** from ONRC's legal-representatives export — better provenance
+than a LinkedIn headline, since it is a legal filing, and it cannot be
+rate-limited or cut off. `src/lib/enrichment/patterns.ts` already implemented
+twelve conventions including `first.last`, with Romanian diacritic folding.
+
+So why was there not one personal address in the database? Four reasons, three
+of them defects.
+
+### The register writes surnames first. We were reading them last.
+
+`splitFullName` takes token[0] as the given name and the last token as the
+surname — right for a vendor, right for a team page, wrong for every row we
+have. ONRC writes `Podar Simona Mihaela`, which is Simona Podar. The generator
+produced `podar.mihaela@`: the surname as the given name, and a *second* given
+name as the surname. Both halves wrong from one mistake.
+
+Nothing caught it because generation had never run against register data, and
+because the fixtures for `patterns.ts` were written given-first — the way a
+developer writes their own name.
+
+The fix does not use a downloaded name list, which would miss the Hungarian and
+German names common in Transylvania (`Tussay Szilard` is surname-first too).
+The register is its own dictionary: `npm run build:given-names` tallies where
+each token appears across all 29,551 names. Of tokens seen 5+ times, **654
+behave like given names, 1,059 like surnames, and 254 are genuinely both** —
+`radu` lands in the ambiguous bucket, correctly.
+
+`npm run backfill:names` resolved all 29,551: **89.8% on lexicon evidence**,
+the rest on the source's known convention. Three rows had been keyed
+given-first by whoever filed them, and the lexicon overrode the convention on
+exactly those — which is the property that makes the source label safe to use.
+
+**A name that cannot be resolved is skipped, not guessed.** One skipped name
+costs a contact. One confidently wrong name puts a stranger on an email to
+their employer's domain.
+
+### The third constant zero: pattern inference
+
+`EmailWaterfall` has always had a pattern-inference step. It has returned
+`null` in production every single time, because `knownContacts` was never
+supplied by any caller — and there was nothing to supply it with, since all
+1,566 stored addresses were role addresses (`office@` 617, `contact@` 210).
+
+`npm run harvest:patterns` supplies it. The mechanism needs no HTML parsing:
+ONRC tells us who administers a company, so if that company publishes
+`andrei.pop@firma.ro` and we hold a Pop Andrei there, the pairing confirms the
+address *and* the convention at once.
+
+**Then it was measured over 200 live Romanian sites, and the number is bad:**
+
+| | |
+|---|---|
+| reachable, any address | 36.5% |
+| published a personal address | 6.5% |
+| pattern confirmed by pairing | **0.5%** |
+
+The reason is structural, not tuning. ONRC gives us the *administrator*; the
+address on a contact page belongs to whoever answers the phone. They are rarely
+the same person.
+
+Two things came out of reading what it actually collected. **Fourteen of
+nineteen "personal" addresses were departmental** — `administratie@`,
+`comercial@`, `showroom@`, `relatiiclienti@` — because `ROLE_PREFIXES` only
+covered English-centric names. That is not cosmetic misfiling: the role/personal
+line is what the entire consent posture rests on.
+
+And pairing was asking too much. `cristian.petrache@codeunit.ro` tells us the
+domain writes `first.last` whether or not we hold Cristian Petrache, and the
+lexicon is what makes it legible. Reading the *shape* rather than the identity
+tripled coverage; across the register it settles around **2.5%**.
+
+**That settles a design question rather than failing one.** Per-company
+inference is a high-confidence bonus, not the mechanism. The prior plus
+verification is the mechanism — which appears to be what the competitor does,
+applying `first.last` everywhere and letting delivery sort it out.
+
+### What it produces
+
+Real rows from the live database, after the fix:
+
+```
+nurvil.ro     first.last  0.80  5 samples  cornel.talmaciu@nurvil.ro     (Talmaciu Cornel Ion)
+trionec.ro    first.last  0.70  1 sample   vasile.nechifor@trionec.ro    (Nechifor Vasile)
+selin.ro      first.last  0.60  2 samples  camelia.suarasan@selin.ro     (Suarasan Camelia)
+codeunit.ro   first.last  0.55  1 sample   cristina.petrache@codeunit.ro (Petrache Cristina)
+```
+
+Surname-first read correctly throughout, diacritics folded the way an address
+folds them.
+
+### Verification is the load-bearing part, and it needs a key
+
+The waterfall's rule is that a generated address is never returned as the
+sendable `email` — only a vendor or a mailbox check may promote it. So without
+a verifier the product generates addresses and then refuses to use any of them.
+
+It cannot be done locally. Mailbox verification needs an SMTP `RCPT TO` probe on
+port 25; Workers blocks outbound 25 and so does essentially every residential
+ISP. **Vendor or nothing.**
+
+`ReoonVerifier` implements the existing `MailboxVerifier` seam — 600/month free,
+no card, catch-all detection. **`REOON_API_KEY` is not set**; the empty slot is
+already in `.env.local`.
+
+Two mapping rules carry the weight:
+
+- **`catch_all` becomes `risky`, never `verified`.** A catch-all host accepts
+  every recipient, so the probe succeeded and proved nothing. Romanian SMBs are
+  overwhelmingly on shared hosting that behaves exactly this way, so getting
+  this wrong would mark most of the register as confirmed.
+- **A quota error becomes `unknown`, never `invalid`.** The demotion is
+  persisted and would outlive the outage.
+
+### Storing personal addresses is a decision that was taken
+
+Personal addresses are persisted, not only the convention derived from them —
+the user's call as data controller, so outreach has a confirmed address rather
+than a generated one. It reverses the `roleOnly` posture the bulk crawler takes,
+so it comes with `emails.source_url`: an address that cannot be pointed back to
+the page that published it is one we should not be holding.
+
+Romanian Law 506/2004 requires prior consent for unsolicited commercial email
+with no explicit B2B carve-out; the usual basis is GDPR Art. 6(1)(f), which
+recent enforcement has tightened. **A suppression list is not built, and it
+blocks the first send.**
+
+## Domains are the real ceiling, and Brave has now been measured
+
+Only **178 of 924 leads** sit at a company with a known domain. No domain means
+no address to build at all, so a perfect email engine still caps at 178 leads.
+
+`BRAVE_SEARCH_API_KEY` is now set, and `npm run discover:domains -- --measure`
+has run for the first time:
+
+| | |
+|---|---|
+| recall — search proposed the right domain | **28.3%** |
+| CUI-provable — the verifier would accept it | **8.3%** |
+| name guessing, for comparison | 47% recall, **0** accepted |
+
+8.3% is low, but it is the only thing that works and it is free. The binding
+constraint is the 2,000-query monthly tier, so **spend it on companies that
+already have leads** (`--search --leads`) rather than on all 11,750 blind.
 
 ## The two constant zeros
 
@@ -697,6 +860,34 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **There are two name splitters, and reaching for the familiar one is a bug.**
+  `splitFullName` in `patterns.ts` reads given-name-first and is correct for
+  vendors and team pages. `resolveNameParts` in `romanian-names.ts` consults
+  the lexicon and is correct for the register. Anything that reads
+  `people.full_name` and wants an address must use the second one with the
+  source's order — `resolvePersonName` answers that in one call. Using
+  `splitFullName` silently reintroduces `podar.mihaela@` for Simona Podar, and
+  it will look completely normal in review.
+- **`people.first_name`/`last_name` are the resolved halves, and `full_name` is
+  not.** `full_name` is ONRC's display string, surname-first. Never derive an
+  address from it directly; the backfill exists so nothing has to.
+- **A catch-all domain is not a verified address.** Reoon returns `catch_all`
+  for hosts that accept every recipient — most Romanian shared hosting. That is
+  the probe succeeding and proving nothing. It maps to `risky`, and if anyone
+  ever "fixes" it to `verified`, the product will confidently mark most of the
+  register as reachable and burn the sending domain finding out.
+- **A verifier failure must never be a verdict.** A 402 for an exhausted quota
+  says nothing about the address. It maps to `unknown`; mapping it to `invalid`
+  would persist a demotion that outlives the outage.
+- **The role/personal split is a legal boundary, not a tidiness one.**
+  `ROLE_PREFIXES` was English-centric and filed `administratie@`, `comercial@`
+  and `relatiiclienti@` as personal addresses. A role address reaches a company;
+  a personal one reaches an individual, and that is the distinction the consent
+  posture rests on. Add Romanian departmental names as they show up.
+- **Long bash heredocs mangle in this environment, reliably.** Two multi-hundred
+  line `<<'EOF'` payloads died with `unexpected EOF` in this session alone. Use
+  the Write and Edit tools for anything sizeable; heredocs are fine only for
+  short, simple patches.
 - **A blank env var is `""`, not undefined.** dotenv parses `KEY=` as an empty
   string, so a default parameter never fires and a `.optional()` never kicks in.
   `getEnv()` strips empties via `present()` for exactly this reason, but any
