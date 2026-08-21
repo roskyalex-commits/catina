@@ -166,20 +166,77 @@ async function main() {
   console.log(`  code:     ${current.join(", ")}`);
   console.log(`  measured: ${observed.join(", ")}`);
 
-  if (observed[0] === PATTERNS_BY_PREVALENCE[0]) {
-    console.log(
-      `\nThe first guess is already the commonest convention. Nothing to change:\n` +
-        `this is the position that matters, because guess-and-verify stops there.`,
-    );
-  } else {
-    const share = tally(rows, (row) => row.email_pattern).get(observed[0])! / rows.length;
-    console.log(
-      `\n  ACTION: \`${observed[0]}\` is the commonest here (${(share * 100).toFixed(1)}%),\n` +
-        `  but \`${PATTERNS_BY_PREVALENCE[0]}\` is tried first. Every lead whose company\n` +
-        `  uses \`${observed[0]}\` spends an extra verification credit to find that out.\n` +
-        `  Move it to the front of PATTERNS_BY_PREVALENCE in patterns.ts.`,
-    );
+  /*
+   * Score the orders by what they cost, not by whether position 1 matches.
+   *
+   * An earlier version of this report compared only the first entry and
+   * declared "nothing to change" while position *two* was demonstrably wrong —
+   * the code tried `flast` (4.8% of domains) ahead of `first` (27.8%). Every
+   * lead at a `first` company paid an extra verification credit for that, and
+   * the report said everything was fine.
+   *
+   * Expected credits = sum over conventions of share x position, capped at the
+   * three candidates `generateCandidates` actually produces. Anything past
+   * three is never tried, so it cannot cost anything.
+   */
+  const shares = tally(rows, (row) => row.email_pattern);
+  const MAX_GUESSES = 3;
+
+  /*
+   * Coverage first, cost second — and in that order for a reason.
+   *
+   * A convention outside the first three is never generated at all, so those
+   * companies are simply unreachable by guessing. An earlier version of this
+   * function summed `share x position` over the first three only, which scored
+   * "never tried" as costing nothing and therefore made the *worse* order look
+   * cheaper. Unreachable is not free; it is the most expensive outcome there is.
+   */
+  const score = (order: readonly string[]) => {
+    const tried = order.slice(0, MAX_GUESSES);
+    let reached = 0;
+    let credits = 0;
+    for (const [pattern, count] of shares) {
+      const position = tried.indexOf(pattern);
+      if (position < 0) continue;
+      const share = count / rows.length;
+      reached += share;
+      credits += share * (position + 1);
+    }
+    return { reached, credits, tried };
+  };
+
+  const code = score(PATTERNS_BY_PREVALENCE);
+  const best = score(observed);
+
+  console.log(`\n  first ${MAX_GUESSES} guesses are all that are ever generated:\n`);
+  console.log(`    code order      ${code.tried.join(", ")}`);
+  console.log(
+    `      reaches ${(code.reached * 100).toFixed(1)}% of domains, ` +
+      `${code.credits.toFixed(2)} credits each`,
+  );
+  console.log(`    measured order  ${best.tried.join(", ")}`);
+  console.log(
+    `      reaches ${(best.reached * 100).toFixed(1)}% of domains, ` +
+      `${best.credits.toFixed(2)} credits each`,
+  );
+
+  const gained = best.reached - code.reached;
+  if (gained <= 0.01) {
+    console.log(`\n  The current order already reaches as many domains. Nothing to change.`);
+    return;
   }
+
+  const missed = code.tried.length
+    ? observed.filter((p) => !code.tried.includes(p)).slice(0, MAX_GUESSES)
+    : [];
+
+  console.log(
+    `\n  ACTION: the code never generates ${missed.join(", ")}, so ` +
+      `${(gained * 100).toFixed(1)}% of domains\n` +
+      `  cannot be reached by guessing at all — not "costs more", cannot be reached.\n` +
+      `  Set PATTERNS_BY_PREVALENCE in patterns.ts to lead with:\n` +
+      `    ${best.tried.join(", ")}`,
+  );
 }
 
 main();

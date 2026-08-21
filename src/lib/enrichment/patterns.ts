@@ -24,20 +24,47 @@ export type EmailPattern =
   | "lastfirst"
   | "lastf";
 
-/** Ordered by how common each is, so an unknown-pattern guess starts sensibly. */
+/**
+ * Ordered by how common each is *in this market*, measured — not assumed.
+ *
+ * This list used to be the global folk ordering, and the first three entries
+ * are the only ones that matter: `generateCandidates` caps a blind guess at
+ * three, so anything below position three is never generated and the companies
+ * using it cannot be reached by guessing at all.
+ *
+ * The old order led with `first.last, flast, firstlast`. Measured over 169
+ * Romanian domains with a confirmed convention (`npm run measure:patterns`):
+ *
+ *   first.last  57%     flast        4%     last         3%
+ *   first       28%     first_last   3%     f.last       2%
+ *   last.first   4%     lastfirst    1%     firstlast    0%
+ *
+ * So `firstlast` occupied a generated slot while matching nothing, and `first`
+ * — more than a quarter of the market — sat at position four and was never
+ * tried. That is 28.2% of domains unreachable, which is not a tuning loss but
+ * a hole in coverage.
+ *
+ * `first` being this common is the genuinely local finding: Romanian SMBs use a
+ * bare given name far more than the global convention suggests.
+ *
+ * Re-run the measurement before changing this. The first three earn their place
+ * by evidence.
+ */
 export const PATTERNS_BY_PREVALENCE: EmailPattern[] = [
   "first.last",
-  "flast",
-  "firstlast",
   "first",
-  "f.last",
-  "first_last",
-  "firstl",
   "last.first",
-  "first-last",
-  "lastfirst",
-  "lastf",
+  "flast",
+  "first_last",
   "last",
+  "f.last",
+  "lastfirst",
+  // Below here: no observations in the Romanian sample. Ordered by the global
+  // convention, since nothing local contradicts it yet.
+  "firstlast",
+  "firstl",
+  "first-last",
+  "lastf",
 ];
 
 export type NameParts = { firstName?: string; lastName?: string };

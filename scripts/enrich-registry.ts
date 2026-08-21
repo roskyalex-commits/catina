@@ -114,6 +114,8 @@ type Update = {
   vat_on_collection?: boolean;
   e_factura_registered?: boolean;
   insolvency_status?: string | null;
+  address?: string | null;
+  phone?: string | null;
   revenue_ron?: number | null;
   revenue_prev_ron?: number | null;
   profit_ron?: number | null;
@@ -137,6 +139,17 @@ function updateFromCompany(id: string, company: AnafCompany): Update {
     insolvency_status: company.inactive
       ? `inactiv${company.inactiveSince ? ` din ${company.inactiveSince}` : ""}`
       : null,
+    /*
+     * Both of these have been in the ANAF payload since the first import and
+     * were dropped for want of a column. Phone is the one that matters: it is
+     * a second outreach channel that needs no domain, no crawl and no mailbox
+     * verification, and paid vendors sell it at five credits a company.
+     *
+     * `undefined` rather than null when absent, so a re-run cannot blank a
+     * value some other source filled in.
+     */
+    address: company.address ?? undefined,
+    phone: company.phone ?? undefined,
     last_enriched_at: new Date().toISOString(),
   };
 }

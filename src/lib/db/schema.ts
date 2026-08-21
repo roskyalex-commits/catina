@@ -220,6 +220,20 @@ export const companies = pgTable(
     country: text("country"),
     city: text("city"),
     county: text("county"),
+    /**
+     * Street address and phone, both of which ANAF has been returning all along.
+     *
+     * `AnafClient` parses `adresa` and `telefon` into `AnafCompany.address` and
+     * `.phone`, and `enrich-registry.ts` has been dropping both on the floor
+     * for want of a column to put them in — across 9,455 already-enriched
+     * companies. A paid vendor sells phone coverage at 5 credits a company; the
+     * free source was already in the payload.
+     *
+     * Re-run `npm run enrich:registry -- --force` after this lands to backfill
+     * them, and measure the result *before* buying phone data from anyone.
+     */
+    address: text("address"),
+    phone: text("phone"),
     website: text("website"),
     linkedinUrl: text("linkedin_url"),
     description: text("description"),
