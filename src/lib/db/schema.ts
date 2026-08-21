@@ -404,6 +404,23 @@ export const companyScans = pgTable(
     }),
     /** Confirmed name/address pairs behind the pattern. One is weak, three is not. */
     emailPatternSamples: integer("email_pattern_samples").notNull().default(0),
+    /**
+     * When the harvester last looked, whether or not it found anything.
+     *
+     * Distinct from `email_pattern` being set, and the distinction is the same
+     * one `company_scans` exists for in the first place: a *found* pattern
+     * records what fired, and resuming a run needs to know what did **not**.
+     * Keying the skip list on `email_pattern` meant a resumed harvest re-crawled
+     * every domain that had already answered "nothing here" — measured at 518
+     * re-crawls producing zero new patterns before this column existed.
+     *
+     * Also distinct from `scanned_at`, which `scan-signals.ts` writes for its
+     * own reasons; a company scanned for signals has not necessarily been
+     * harvested for addresses.
+     */
+    emailPatternCheckedAt: timestamp("email_pattern_checked_at", {
+      withTimezone: true,
+    }),
 
     /**
      * Where the domain's mail actually lands, from the MX lookup.

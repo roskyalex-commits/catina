@@ -1,0 +1,1 @@
+ALTER TABLE "company_scans" ADD COLUMN "email_pattern_checked_at" timestamp with time zone;

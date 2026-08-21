@@ -152,14 +152,22 @@ async function loadTargets(limit: number): Promise<Target[]> {
     .slice(0, Number.isFinite(limit) ? limit : undefined);
 }
 
-/** Company ids that already carry an inferred pattern, so a re-run skips them. */
-async function alreadyInferred(): Promise<Set<string>> {
+/**
+ * Company ids the harvester has already looked at — found or not.
+ *
+ * Keyed on `email_pattern_checked_at`, not on `email_pattern`. Skipping only
+ * the domains where a pattern was *found* means a resumed run re-crawls every
+ * domain that already answered "nothing here", which is ~97% of them: measured
+ * at 518 re-crawls producing zero new patterns before this was fixed. The
+ * absence of a pattern is a result, and it has to be recorded as one.
+ */
+async function alreadyChecked(): Promise<Set<string>> {
   const done = new Set<string>();
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await db
       .from("company_scans")
       .select("company_id")
-      .eq("email_pattern_source", "inferred")
+      .not("email_pattern_checked_at", "is", null)
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`company_scans: ${error.message}`);
     if (!data?.length) break;
@@ -187,8 +195,15 @@ async function harvest(target: Target): Promise<Outcome> {
     personal: harvested.filter((entry) => !entry.isRole).length,
     pairs: 0,
   };
-  if (harvested.length === 0) return outcome;
-
+  /*
+   * No early return for an unreachable site.
+   *
+   * Returning here would skip the `email_pattern_checked_at` stamp below, so
+   * every dead or JavaScript-only domain would be re-crawled on every resume,
+   * forever — and at 63% unreachable that is most of the work. "We looked and
+   * there was nothing" is a result worth recording, which is the same reason
+   * `company_scans` exists at all.
+   */
   const pairs = pairAddresses(
     harvested.map((entry) => entry.address),
     target.people,
@@ -220,6 +235,9 @@ async function harvest(target: Target): Promise<Outcome> {
       email_pattern_confidence: inferred?.confidence ?? null,
       email_pattern_source: inferred ? "inferred" : null,
       email_pattern_samples: inferred?.samples ?? 0,
+      // Stamped whether or not a pattern was found — this is what makes a
+      // resumed run skip the domains that already answered "nothing here".
+      email_pattern_checked_at: new Date().toISOString(),
       mx_provider: mxResult.provider ?? null,
       scanned_at: new Date().toISOString(),
     },
@@ -255,12 +273,12 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
 
   const targets = await loadTargets(options.limit);
-  const done = options.force ? new Set<string>() : await alreadyInferred();
+  const done = options.force ? new Set<string>() : await alreadyChecked();
   const todo = targets.filter((target) => !done.has(target.id));
 
   console.log(
     `${targets.length} companies with a domain and a resolved person\n` +
-      `${targets.length - todo.length} already carry an inferred pattern, ` +
+      `${targets.length - todo.length} already looked at, ` +
       `${todo.length} to crawl\n`,
   );
 
