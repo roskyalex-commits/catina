@@ -361,7 +361,23 @@ export class EmailWaterfall {
      * unchanged behaviour, and the reason the product degrades safely when no
      * key is set.
      */
-    if (!best) {
+    /*
+     * Runs when we have nothing *or* only a company mailbox.
+     *
+     * `!best` alone was wrong, and it silently disabled this whole step for the
+     * majority of leads: a crawled `office@` is a perfectly good `best`, so any
+     * company publishing one never got a named-contact attempt at all. That is
+     * exactly backwards — reaching the company is the fallback, and reaching the
+     * person is the product.
+     *
+     * The caller decides via `targetConfidence`. Left at the default, a role
+     * address satisfies it and nothing here runs, so the free path stays free.
+     * Raised above the role threshold, the chain keeps going and spends
+     * verification credits looking for the person.
+     */
+    const roleOnlySoFar = Boolean(best?.isRoleAddress && best.confidence < target);
+
+    if (!best || roleOnlySoFar) {
       const guesses = generateCandidates(input.fullName, input.domain, {
         parts: input.nameParts,
         max: 3,
@@ -370,6 +386,8 @@ export class EmailWaterfall {
       if (this.deps.verifier && guesses.length > 0) {
         const promoted = await this.verifyGuesses(guesses, attempts, mxValid);
         if (promoted) {
+          // A confirmed personal address beats a role address outright, and the
+          // role one survives in `alternatives` as the fallback it always was.
           return {
             email: promoted,
             attempts,
@@ -398,6 +416,9 @@ export class EmailWaterfall {
         creditsSpent: 0,
       });
 
+      // No confirmed person, but the role address is still a real way to reach
+      // the company — returning null here would discard it.
+      if (best) return { email: best, attempts, alternatives: dedupe(candidates, best) };
       return { email: null, attempts, alternatives: dedupe(candidates, null) };
     }
 

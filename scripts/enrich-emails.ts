@@ -57,6 +57,15 @@ type Options = {
   dryRun: boolean;
   /** Harvest role addresses per company instead of resolving per lead. */
   companies: boolean;
+  /**
+   * Keep looking for the *person* even when the company publishes an `office@`.
+   *
+   * The default stops at a role address, which is right for reach-the-company
+   * outreach and free. It also means a company with an `office@` never gets a
+   * named-contact attempt at all — so the addresses that actually differentiate
+   * this product were never being tried for on the majority of leads.
+   */
+  named?: boolean;
 };
 
 function parseArgs(argv: string[]): Options {
@@ -72,6 +81,9 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--force":
         options.force = true;
+        break;
+      case "--named":
+        options.named = true;
         break;
       case "--dry-run":
         options.dryRun = true;
@@ -95,7 +107,8 @@ const db = createClient(
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Leads still without an address.
+ * Leads to work on: those without an address, or — with `--named` — those whose
+ * only address reaches the company rather than a person.
  *
  * Paged with `.range()`: PostgREST caps a select at 1,000 rows and says nothing
  * about it, which is how an earlier full-registry pass reported success having
@@ -112,11 +125,20 @@ async function loadLeads(options: Options, orgId: string): Promise<EnrichableLea
       .from("leads")
       .select(ENRICHABLE_LEAD_COLUMNS)
       .eq("org_id", orgId)
-      .is("email_id", null)
       // Best leads first: if a budget runs out mid-run, it should run out on
       // the leads that mattered least.
       .order("score", { ascending: false })
       .range(from, from + wanted - 1);
+
+    /*
+     * `--named` deliberately includes leads that already have an address.
+     *
+     * Those are the ones carrying a crawled `office@`, and they are exactly the
+     * population this flag exists for: the company is reachable, but not the
+     * person. Filtering them out — the default — would leave the flag with
+     * nothing to do on the leads that most need it.
+     */
+    if (!options.named) query = query.is("email_id", null);
 
     if (!options.force) query = query.is("enriched_at", null);
 
@@ -292,7 +314,15 @@ async function main() {
         knownRoleEmails: known.get(lead.companyId ?? ""),
         knownPattern: patterns.get(lead.companyId ?? ""),
       },
-      { force: options.force },
+      {
+        force: options.force,
+        /*
+         * Above the role-address threshold, so a crawled `office@` no longer
+         * ends the chain and guess-and-verify gets to run. Costs verification
+         * credits per lead, which is why it is a flag and not the default.
+         */
+        targetConfidence: options.named ? 0.9 : undefined,
+      },
     );
 
     if (outcome.email) {

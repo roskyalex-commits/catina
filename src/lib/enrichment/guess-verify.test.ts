@@ -160,6 +160,53 @@ describe("what stops it burning credits", () => {
   });
 });
 
+describe("a company mailbox does not block the search for the person", () => {
+  it("keeps going past a crawled office@ when the caller asks for a person", async () => {
+    /*
+     * The default stops at a role address, which silently disabled
+     * guess-and-verify for every company that publishes one -- the majority.
+     * Reaching the company is the fallback; reaching the person is the product.
+     */
+    const verifier = verifierReturning(["verified"]);
+    const result = await build(verifier).resolve({
+      ...ANA,
+      knownRoleEmails: ["office@firma.ro"],
+      targetConfidence: 0.9,
+    });
+
+    expect(result.email?.address).toBe("ana.popescu@firma.ro");
+    expect(result.email?.status).toBe("verified");
+    // The role address survives as the fallback it always was.
+    expect(result.alternatives.map((a) => a.address)).toContain("office@firma.ro");
+  });
+
+  it("still returns the role address when no guess is confirmed", async () => {
+    // Failing to find the person must not lose the way to reach the company.
+    const verifier = verifierReturning(["invalid"]);
+    const result = await build(verifier).resolve({
+      ...ANA,
+      knownRoleEmails: ["office@firma.ro"],
+      targetConfidence: 0.9,
+    });
+
+    expect(result.email?.address).toBe("office@firma.ro");
+  });
+
+  it("leaves the free path free at the default target", async () => {
+    // No flag, no credits: a role address satisfies the default and the
+    // verifier is never reached.
+    const verifier = verifierReturning(["verified"]);
+    const result = await build(verifier).resolve({
+      ...ANA,
+      knownRoleEmails: ["office@firma.ro"],
+      targetConfidence: 0.55,
+    });
+
+    expect(verifier.calls).toHaveLength(0);
+    expect(result.email?.address).toBe("office@firma.ro");
+  });
+});
+
 describe("without a verifier, nothing changes", () => {
   it("keeps guesses as alternatives and never returns one as the address", async () => {
     /*
