@@ -7,6 +7,8 @@ import { getSessionContext } from "@/lib/supabase/server";
 import { optionalString } from "@/lib/supabase/row";
 import { LEAD_COLUMNS } from "./contacts";
 import { demoDataset, isDemoMode } from "./demo";
+import { listConnectedMailboxes } from "./mailboxes";
+import { campaignForAgent, queueForCampaign } from "./queue";
 import { activityEventFrom, contactRowFrom } from "./rows";
 import type { AgentDetail, AgentSummary } from "./types";
 
@@ -83,11 +85,32 @@ export async function listAgents(): Promise<AgentSummary[]> {
     return [];
   }
 
-  const counts = await countsByAgent(session.supabase, session.orgId);
+  const [counts, mailbox] = await Promise.all([
+    countsByAgent(session.supabase, session.orgId),
+    sendingMailbox(),
+  ]);
+
   return (data ?? []).map((row) => {
     const agent = row as Record<string, unknown>;
-    return agentSummaryFrom(agent, counts.get(String(agent.id)));
+    return { ...agentSummaryFrom(agent, counts.get(String(agent.id))), mailbox };
   });
+}
+
+/**
+ * The workspace's sending mailbox, in the shape the cards want.
+ *
+ * Org-level rather than per-agent. `agents.email_account_id` exists and has
+ * never been written — connecting Gmail authorises a workspace, not one agent —
+ * so reading that column would report "no mailbox" on a workspace that has one.
+ *
+ * `warmingUp` is false and stays false until something actually ramps the
+ * volume. Reporting a warm-up we do not perform would be a claim about
+ * deliverability we are not entitled to make.
+ */
+async function sendingMailbox(): Promise<AgentSummary["mailbox"]> {
+  const mailboxes = await listConnectedMailboxes();
+  const active = mailboxes.find((mailbox) => mailbox.isActive && mailbox.canSend);
+  return active ? { address: active.address, warmingUp: false } : null;
 }
 
 export async function getAgent(id: string): Promise<AgentDetail | null> {
@@ -130,6 +153,7 @@ export async function getAgent(id: string): Promise<AgentDetail | null> {
   ]);
 
   const detail = agentDetailFrom(data as Record<string, unknown>, counts.get(id));
+  detail.mailbox = await sendingMailbox();
 
   detail.leads = (leadRows.data ?? []).map((row) =>
     contactRowFrom(row as Record<string, unknown>),
@@ -142,9 +166,32 @@ export async function getAgent(id: string): Promise<AgentDetail | null> {
     found: detail.leads.length,
   };
 
-  // The queue stays empty until drafting exists — an agent that has sourced
-  // leads has not thereby written anything to send.
-  detail.queue = [];
+  /*
+   * The campaign, and what is waiting in it.
+   *
+   * Absent until `outreach:draft` runs for the first time — a campaign row is
+   * created on demand rather than with the agent, so `null` here means "nothing
+   * has been drafted yet" and not "something failed to load". The defaults from
+   * `agentDetailFrom` stand in that case, which is why they are written to be
+   * true of an agent with no campaign rather than to be placeholders.
+   */
+  const campaign = await campaignForAgent(supabase, orgId, id);
+  if (campaign) {
+    detail.campaign = {
+      ...detail.campaign,
+      autoSend: campaign.autoSend,
+      dailySendLimit: campaign.dailySendLimit,
+      senderEmail: campaign.senderEmail,
+      complianceAcknowledged: campaign.complianceAcknowledged,
+    };
+    detail.queue = await queueForCampaign(supabase, campaign);
+
+    // "Contacted" means a message left, which the lead status already records;
+    // this is the count still waiting on the user, and it is what the sidebar
+    // badge and the review prompt are counting.
+    detail.pendingReview =
+      detail.queue.length > 0 ? { count: detail.queue.length } : null;
+  }
 
   return detail;
 }

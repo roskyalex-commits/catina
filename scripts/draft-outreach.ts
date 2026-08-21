@@ -19,11 +19,14 @@
  *
  * ## What it costs
  *
- * One Claude call per draft, and no way around that: the whole claim is that
+ * One model call per draft, and no way around that: the whole claim is that
  * the opening line is built from a specific fact about this company, which is
  * not a merge field. `--limit` is the budget control and it defaults low.
+ * Either `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` works — Gemini has a free
+ * tier, so drafting does not require paying anyone first.
  */
 import { createClient } from "@supabase/supabase-js";
+import { NO_LLM_CONFIGURED, preferredExtractor } from "../src/lib/llm/registry";
 import { draftMessage } from "../src/lib/outreach/draft";
 import {
   OUTREACH_LEAD_COLUMNS,
@@ -46,7 +49,7 @@ import { findSignalsFor } from "../src/lib/signals/repository";
 import type { Signal } from "../src/lib/signals/types";
 import { requireEnv } from "./load-env";
 
-/** Low on purpose: every draft is a paid model call. */
+/** Low on purpose: every draft is a model call. */
 const DEFAULT_LIMIT = 10;
 /** How many leads to consider for each one we can draft. */
 const CANDIDATE_MULTIPLE = 40;
@@ -194,14 +197,23 @@ async function main() {
     return;
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.error(
-      "\nANTHROPIC_API_KEY is not set. Drafting builds each opening line from the\n" +
-        "signal, which is a model call — there is no template fallback by design.",
-    );
+  /*
+   * Either model key works. Drafting builds each opening line from the signal,
+   * which is a model call — there is no template fallback by design — but that
+   * is not the same as requiring a *paid* one, and this workspace has a Gemini
+   * key and no Anthropic key, which is the common case for someone trying the
+   * product before paying anyone.
+   */
+  const extractor = preferredExtractor({
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    GEMINI_MODEL: process.env.GEMINI_MODEL,
+  });
+  if (!extractor) {
+    console.error(`\n${NO_LLM_CONFIGURED}`);
     process.exit(1);
   }
+  console.log(`\nDrafting with ${extractor.label}`);
 
   /*
    * Spread over the next working day, not this one. A run at 22:00 that
@@ -238,7 +250,7 @@ async function main() {
           signal,
           language: draftLanguageFor(item.lead.country),
         },
-        apiKey,
+        extractor,
       );
 
       drafts.push({
@@ -287,15 +299,23 @@ type Agent = {
   senderName: string;
 };
 
-/** The agent to draft for — named, or the only active one. */
+/**
+ * The agent to draft for — named, or the only active one.
+ *
+ * `is_active` filters the *automatic* choice and not a named one. That flag is
+ * a plan-cap device (`agent:toggle` flips it to free the free plan's single
+ * slot) and says nothing about whether an agent's leads are real: both agents
+ * holding the bulk of this workspace's leads are `is_active = false`. Filtering
+ * a named id on it answers "no such agent" for an agent that plainly exists.
+ */
 async function loadAgent(agentId?: string): Promise<Agent | null> {
   let query = db
     .from("agents")
     .select("id, org_id, name, value_prop, product_name")
-    .eq("is_active", true)
     .order("created_at", { ascending: false })
     .limit(agentId ? 1 : 2);
   if (agentId) query = query.eq("id", agentId);
+  else query = query.eq("is_active", true);
 
   const { data, error } = await query;
   if (error) {

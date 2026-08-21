@@ -1,6 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
+import type { StructuredExtractor } from "@/lib/llm/types";
 import type { Signal } from "@/lib/signals/types";
 
 /**
@@ -76,26 +75,34 @@ Length is a feature. Under 120 words. Shorter is better if the point lands.
 
 When writing in Romanian, write as a Romanian speaker would to a business contact: address them with "dumneavoastră", keep it direct rather than florid, and never produce translated-sounding English idiom. Romanian business email is more formal than English but not ornate.`;
 
+/**
+ * Takes a `StructuredExtractor` rather than an API key.
+ *
+ * It used to construct the Anthropic SDK directly, which made drafting — the
+ * step that turns a list of leads into a business — dead for anyone without a
+ * paid Anthropic account. `src/lib/llm/` already solved this for the ICP
+ * analysis, for a reason that applies here with more force: Gemini has a free
+ * tier, and "you need a paid account before this does anything" is a poor place
+ * to put the one feature the product exists for.
+ *
+ * Claude still wins when both keys are set; `preferredExtractor` decides.
+ */
 export async function draftMessage(
   input: DraftInput,
-  apiKey: string,
+  extractor: StructuredExtractor,
 ): Promise<Draft> {
-  const client = new Anthropic({ apiKey });
-
-  const message = await client.messages.parse({
-    model: "claude-opus-5",
-    max_tokens: 4000,
+  const parsed = await extractor.extract({
     system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildPrompt(input) }],
-    output_config: { format: zodOutputFormat(draftSchema) },
+    user: buildPrompt(input),
+    schema: draftSchema,
+    schemaName: "outreach_draft",
+    // A 120-word email. Generous, and far below the extraction default, because
+    // the failure this bounds is a model that will not stop writing.
+    maxOutputTokens: 4000,
   });
 
-  if (message.stop_reason === "refusal" || !message.parsed_output) {
-    throw new Error("Could not draft a message for this lead.");
-  }
-
   return {
-    ...normalise(message.parsed_output),
+    ...normalise(parsed),
     language: input.language,
     signalDedupeKey: input.signal.dedupeKey,
   };

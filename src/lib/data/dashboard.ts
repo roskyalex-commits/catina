@@ -1,6 +1,7 @@
 import { getSessionContext } from "@/lib/supabase/server";
-import { demoDataset, isDemoMode } from "./demo";
 import { hotContacts, topContacts } from "./contacts";
+import { demoDataset, isDemoMode } from "./demo";
+import { listConnectedMailboxes } from "./mailboxes";
 import { SCORE_BANDS } from "./score";
 import { RANGE_DAYS } from "./types";
 import type { ChartData, DashboardData, RangeKey } from "./types";
@@ -109,7 +110,7 @@ async function liveDashboard(range: RangeKey): Promise<DashboardData> {
   const since = new Date(Date.now() - RANGE_DAYS[range] * DAY);
   const scoped = () => supabase.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId);
 
-  const [newLeads, hot, engaged, runs, agents, signals, drafts, leads] =
+  const [newLeads, hot, engaged, runs, agents, signals, drafts, leads, mailboxes] =
     await Promise.all([
       scoped().eq("status", "new"),
       scoped().gte("score", SCORE_BANDS.hot),
@@ -123,7 +124,7 @@ async function liveDashboard(range: RangeKey): Promise<DashboardData> {
         .limit(500),
       supabase
         .from("agents")
-        .select("next_launch_at, email_account_id")
+        .select("next_launch_at")
         .eq("org_id", orgId)
         .eq("is_active", true),
       supabase.from("signals").select("id", { count: "exact", head: true }),
@@ -133,6 +134,7 @@ async function liveDashboard(range: RangeKey): Promise<DashboardData> {
         .eq("org_id", orgId)
         .eq("state", "drafted"),
       scoped(),
+      listConnectedMailboxes(),
     ]);
 
   const runRows = (runs.data ?? []) as Record<string, unknown>[];
@@ -146,7 +148,13 @@ async function liveDashboard(range: RangeKey): Promise<DashboardData> {
   return {
     greetingName: (session.user.email ?? "there").split("@")[0] ?? "there",
     activeSignals: signals.count ?? 0,
-    mailboxConnected: agentRows.some((agent) => agent.email_account_id !== null),
+    /*
+     * Read from `email_accounts`, not from `agents.email_account_id`. That
+     * column exists and has never been written: connecting Gmail authorises a
+     * workspace rather than one agent, so this used to report "no mailbox" on a
+     * workspace that had one connected and working.
+     */
+    mailboxConnected: mailboxes.some((mailbox) => mailbox.isActive && mailbox.canSend),
     nextActions: {
       pendingTasks: newLeads.count ?? 0,
       nextLaunchAt: nextLaunch ?? null,

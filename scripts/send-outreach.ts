@@ -4,6 +4,7 @@
  *   npm run outreach:send -- --dry-run           # what would leave, and to whom
  *   npm run outreach:send                        # Gmail drafts, in the user's mailbox
  *   npm run outreach:send -- --now               # ignore the schedule
+ *   npm run outreach:send -- --activate          # start the campaign, once
  *
  * This is the only script in the repo that produces something a stranger sees,
  * so it is built to be run in the wrong mood without doing damage:
@@ -49,10 +50,17 @@ type Options = {
   /** Send everything due or not — for testing, and it says so in the output. */
   now: boolean;
   mailbox?: string;
+  /** Marks the campaign active. Explicit, and separate from auto-send. */
+  activate: boolean;
 };
 
 function parseArgs(argv: string[]): Options {
-  const options: Options = { limit: DEFAULT_LIMIT, dryRun: false, now: false };
+  const options: Options = {
+    limit: DEFAULT_LIMIT,
+    dryRun: false,
+    now: false,
+    activate: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const next = () => argv[(i += 1)];
     switch (argv[i]) {
@@ -70,6 +78,9 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--now":
         options.now = true;
+        break;
+      case "--activate":
+        options.activate = true;
         break;
       default:
         if (argv[i].startsWith("--")) throw new Error(`Unknown flag: ${argv[i]}`);
@@ -89,6 +100,19 @@ async function main() {
 
   const campaign = await loadCampaign(options.agentId);
   if (!campaign) process.exit(1);
+
+  if (options.activate && campaign.status !== "active") {
+    const { error } = await db
+      .from("campaigns")
+      .update({ status: "active", updated_at: new Date().toISOString() })
+      .eq("id", campaign.id);
+    if (error) {
+      console.error(`Could not activate the campaign: ${error.message}`);
+      process.exit(1);
+    }
+    campaign.status = "active";
+    console.log(`Activated "${campaign.name}".\n`);
+  }
 
   const mailbox = await findMailbox(db, campaign.orgId, options.mailbox ?? campaign.senderEmail);
   if (!mailbox && !options.dryRun) {
@@ -111,6 +135,24 @@ async function main() {
   );
   console.log(`Today:    ${already} sent, cap ${limit}`);
   if (options.now) console.log(`Schedule: ignored (--now)`);
+
+  /*
+   * Checked once, up front. `guardSend` refuses every message individually with
+   * "Campaign is paused", which is both repetitive and misleading on a first
+   * run: `ensureCampaign` creates the row as `draft`, so a campaign nobody has
+   * ever paused reports itself paused. Saying it once, in terms of the thing
+   * that has not happened yet, is the difference between a dead end and a step.
+   */
+  if (campaign.status !== "active" && !options.dryRun) {
+    console.error(
+      `\nThis campaign is "${campaign.status}", so nothing will send.\n\n` +
+        `  Starting it is a deliberate act and stays one:\n` +
+        `    npm run outreach:send -- --agent ${campaign.agentId} --activate\n\n` +
+        `  That only marks the campaign active. Auto-send stays off, so messages\n` +
+        `  still become drafts in your own Gmail rather than leaving on their own.`,
+    );
+    process.exit(1);
+  }
 
   const messages = await loadDue(campaign, options);
   console.log(`\n${messages.length} message${messages.length === 1 ? "" : "s"} due\n`);
@@ -243,7 +285,9 @@ function summarise(outcomes: readonly SendOutcome[], options: Options): void {
 type Campaign = {
   id: string;
   orgId: string;
+  agentId: string;
   name: string;
+  /** Mutable: `--activate` flips it in place after writing the change. */
   status: string;
   autoSend: boolean;
   dailyLimit: number;
@@ -292,6 +336,7 @@ async function loadCampaign(agentId?: string): Promise<Campaign | null> {
   return {
     id: String(row.id),
     orgId: String(row.org_id),
+    agentId: String(row.agent_id ?? ""),
     name: typeof row.name === "string" ? row.name : "Campaign",
     status: typeof row.status === "string" ? row.status : "draft",
     autoSend: row.auto_send === true,
