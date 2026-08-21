@@ -182,18 +182,24 @@ type Outcome = {
   addresses: number;
   personal: number;
   pairs: number;
+  /** Zero means we learned nothing and this domain must be retried. */
+  pagesRead: number;
   pattern?: string;
   confidence?: number;
   basis?: "paired" | "shape";
 };
 
 async function harvest(target: Target): Promise<Outcome> {
-  const harvested = await fetchContactAddresses(target.domain).catch(() => []);
+  const { addresses: harvested, pagesRead } = await fetchContactAddresses(
+    target.domain,
+  ).catch(() => ({ addresses: [], pagesRead: 0 }));
+
   const outcome: Outcome = {
     domain: target.domain,
     addresses: harvested.length,
     personal: harvested.filter((entry) => !entry.isRole).length,
     pairs: 0,
+    pagesRead,
   };
   /*
    * No early return for an unreachable site.
@@ -239,7 +245,15 @@ async function harvest(target: Target): Promise<Outcome> {
       email_pattern_samples: inferred?.samples ?? 0,
       // Stamped whether or not a pattern was found — this is what makes a
       // resumed run skip the domains that already answered "nothing here".
-      email_pattern_checked_at: new Date().toISOString(),
+      /*
+       * Stamped only when a page was actually read.
+       *
+       * "We read the site and it publishes no address" is a settled answer and
+       * should never be re-crawled. "We could not read the site" is not an
+       * answer at all, and stamping it buries the domain permanently — which is
+       * exactly what a degraded run did to 3,333 of them.
+       */
+      email_pattern_checked_at: pagesRead > 0 ? new Date().toISOString() : null,
       mx_provider: mxResult.provider ?? null,
       scanned_at: new Date().toISOString(),
     },
@@ -324,13 +338,15 @@ async function main() {
 }
 
 function report(outcomes: Outcome[]) {
+  const read = outcomes.filter((outcome) => outcome.pagesRead > 0);
   const reachable = outcomes.filter((outcome) => outcome.addresses > 0);
   const withPersonal = outcomes.filter((outcome) => outcome.personal > 0);
   const withPattern = outcomes.filter((outcome) => outcome.pattern);
   const paired = withPattern.filter((outcome) => outcome.basis === "paired");
 
   console.log(`\n\nCrawled ${outcomes.length} sites\n`);
-  console.log(`  reachable, any address     ${pct(reachable.length, outcomes.length)}`);
+  console.log(`  site could be read         ${pct(read.length, outcomes.length)}`);
+  console.log(`  published any address      ${pct(reachable.length, outcomes.length)}`);
   console.log(`  published a personal one   ${pct(withPersonal.length, outcomes.length)}`);
   console.log(`  pattern known              ${pct(withPattern.length, outcomes.length)}`);
   console.log(`    of which confirmed       ${pct(paired.length, outcomes.length)}`);

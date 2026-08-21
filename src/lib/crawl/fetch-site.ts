@@ -294,7 +294,7 @@ export const ROLE_PREFIXES = new Set([
 export function extractEmails(
   html: string,
   domain: string,
-  options: { roleOnly?: boolean } = {},
+  options: { roleOnly?: boolean; all?: boolean } = {},
 ): string[] {
   const matches =
     html.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) ?? [];
@@ -311,6 +311,21 @@ export function extractEmails(
   );
 
   if (options.roleOnly) return [...new Set(roleOnly)].slice(0, 10);
+
+  /*
+   * `all` exists because the default is a *preference*, not a filter, and the
+   * difference is easy to miss: without it, a page carrying both `office@` and
+   * `ion.popescu@` returns only `office@`, because a non-empty role list wins
+   * outright. That is right for onboarding, which wants the company's stated
+   * contact route and nothing else.
+   *
+   * It is wrong for the pattern harvester, whose entire purpose is the personal
+   * address — and contact pages are precisely where both appear together, so
+   * the preference was silently discarding the sample on the pages most likely
+   * to carry one.
+   */
+  if (options.all) return [...new Set(relevant)].slice(0, 10);
+
   return [...new Set(roleOnly.length ? roleOnly : relevant)].slice(0, 10);
 }
 
@@ -505,14 +520,35 @@ export type HarvestedAddress = {
  * Returns `[]` rather than throwing, for the same reason `fetchRoleEmails`
  * does: a site that is down or JavaScript-only is the ordinary case.
  */
+export type ContactHarvest = {
+  addresses: HarvestedAddress[];
+  /**
+   * How many distinct pages were actually read.
+   *
+   * The caller needs this to tell two very different outcomes apart, and
+   * returning a bare array made them identical. **Zero pages** means we learned
+   * nothing — the site was down, blocked us, or the network failed — and asking
+   * again later is worth it. **Pages read, no addresses** is a real answer: this
+   * company does not publish an address, and re-crawling it forever is waste.
+   *
+   * Conflating them cost a full pass over 3,333 domains: a run degraded to 0.2%
+   * reachable (against 15% on the same domains sampled fresh), and every one of
+   * them was recorded as "checked, nothing here" and so excluded from retry.
+   */
+  pagesRead: number;
+};
+
 export async function fetchContactAddresses(
   rawDomain: string,
-): Promise<HarvestedAddress[]> {
+): Promise<ContactHarvest> {
   let url: URL;
   try {
     url = normaliseUrl(rawDomain);
   } catch {
-    return [];
+    // A malformed domain is a settled answer, not a transient failure — but it
+    // has no page behind it either, so it reports as unreadable and the caller
+    // decides. Nothing about it will change on a retry.
+    return { addresses: [], pagesRead: 0 };
   }
 
   const origin = url.origin;
@@ -520,6 +556,7 @@ export async function fetchContactAddresses(
   const disallows = await loadRobotsRules(origin);
 
   const found = new Map<string, HarvestedAddress>();
+  const seenBodies = new Set<string>();
   let pagesRead = 0;
 
   for (const path of TEAM_PATHS) {
@@ -532,10 +569,25 @@ export async function fetchContactAddresses(
 
     const raw = await res.text();
     if (raw.length > MAX_BYTES_PER_PAGE) continue;
+
+    /*
+     * Soft-404 sites serve the same homepage for every path, so `/contact`,
+     * `/echipa` and `/team` all come back 200 with identical bytes and spend
+     * the whole five-page budget before `/about` or `/` is ever tried. Skipping
+     * a body we have already read costs one cheap comparison and buys back
+     * four page slots on exactly the sites that need them most.
+     */
+    const fingerprint = `${raw.length}:${raw.slice(0, 512)}`;
+    if (seenBodies.has(fingerprint)) continue;
+    seenBodies.add(fingerprint);
+
     pagesRead += 1;
 
     const sourceUrl = `${origin}${path}`;
-    for (const address of extractEmails(raw, domain)) {
+    // `all`, not the default preference: the personal address is the point
+    // here, and a page carrying `office@` alongside it would otherwise return
+    // only the role one.
+    for (const address of extractEmails(raw, domain, { all: true })) {
       // First page wins the provenance: if `office@` appears in the footer of
       // every page, the URL recorded should be where it was actually read.
       if (found.has(address)) continue;
@@ -546,7 +598,7 @@ export async function fetchContactAddresses(
     if (personal.length >= ENOUGH_SAMPLES) break;
   }
 
-  return [...found.values()];
+  return { addresses: [...found.values()], pagesRead };
 }
 
 /**
@@ -558,5 +610,20 @@ export async function fetchContactAddresses(
  * on the way out of the crawler and the other way on the way into the database.
  */
 function isRolePrefix(address: string): boolean {
-  return ROLE_PREFIXES.has(address.split("@")[0].split("+")[0]);
+  const local = address.split("@")[0].split("+")[0];
+  if (ROLE_PREFIXES.has(local)) return true;
+
+  /*
+   * Qualified role addresses: `office-vw@`, `vanzari.bucuresti@`,
+   * `contact_cluj@`. A dealership with one mailbox per brand or one per branch
+   * is common here, and every one of them was being filed as a *personal*
+   * address because the local part is not exactly `office`.
+   *
+   * Only the leading segment is consulted, so `ion.popescu@` is untouched —
+   * `ion` is nobody's department. The direction of error matters: calling a
+   * departmental address personal overstates what we hold about an individual,
+   * which is the wrong way round for the consent posture.
+   */
+  const head = local.split(/[-._]/)[0];
+  return head.length > 0 && ROLE_PREFIXES.has(head);
 }
