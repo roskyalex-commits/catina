@@ -399,8 +399,20 @@ export const companyScans = pgTable(
      */
     emailPattern: text("email_pattern"),
     emailPatternConfidence: real("email_pattern_confidence"),
+    /**
+     * How the convention was arrived at. These are different kinds of evidence
+     * and must not be averaged together:
+     *
+     *   `paired`   — an address matched a person we hold from the register.
+     *                Confirmation of both the person and the convention.
+     *   `shape`    — an address read as a name by the lexicon, owner unknown.
+     *                Legible, not confirmed. The common case, by far.
+     *   `prior`    — no evidence at this domain; the measured distribution.
+     *   `inferred` — legacy, written before the two were told apart. Means
+     *                "paired or shape, we did not record which".
+     */
     emailPatternSource: text("email_pattern_source", {
-      enum: ["inferred", "prior"],
+      enum: ["paired", "shape", "prior", "inferred"],
     }),
     /** Confirmed name/address pairs behind the pattern. One is weak, three is not. */
     emailPatternSamples: integer("email_pattern_samples").notNull().default(0),

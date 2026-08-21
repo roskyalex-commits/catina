@@ -26,6 +26,7 @@
     "scan:signals": "tsx scripts/scan-signals.ts",
     "rescore:leads": "tsx scripts/rescore-leads.ts",
     "measure:keyword-sourcing": "tsx scripts/measure-keyword-sourcing.ts",
+    "measure:patterns": "tsx scripts/measure-email-patterns.ts",
     "build:industries": "tsx scripts/build-industries.ts",
     "build:given-names": "tsx scripts/build-given-names.ts",
     "repair:caen-labels": "tsx scripts/repair-caen-labels.ts",

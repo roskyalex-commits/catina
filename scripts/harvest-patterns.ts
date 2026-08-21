@@ -233,7 +233,9 @@ async function harvest(target: Target): Promise<Outcome> {
       company_id: target.id,
       email_pattern: inferred?.pattern ?? null,
       email_pattern_confidence: inferred?.confidence ?? null,
-      email_pattern_source: inferred ? "inferred" : null,
+      // The real basis, not a lump label: a pair confirms an identity, a
+      // shape only reads like one, and the measurement has to tell them apart.
+      email_pattern_source: inferred?.basis ?? null,
       email_pattern_samples: inferred?.samples ?? 0,
       // Stamped whether or not a pattern was found — this is what makes a
       // resumed run skip the domains that already answered "nothing here".
