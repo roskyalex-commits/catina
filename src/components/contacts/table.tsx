@@ -166,12 +166,14 @@ function ContactsTableBody({ rows }: { rows: ContactRow[] }) {
 
                 <td className="whitespace-nowrap px-3 py-4 text-[13px] text-muted">
                   {/*
-                    No Enrich control here on purpose. The trade register does
-                    not publish phone numbers and no source in the app produces
-                    one, so a button would be a promise nothing can keep.
+                    Still no Enrich control, but for a different reason than the
+                    one that used to be written here. That comment said the
+                    trade register does not publish phone numbers; ANAF does,
+                    and 98.2% of companies now carry one from the ordinary
+                    registry pass. Nothing is left to enrich on demand.
                   */}
                   {row.phone ?? (
-                    <span title="The trade register does not publish phone numbers">—</span>
+                    <span title="ANAF has no phone number on file for this company">—</span>
                   )}
                 </td>
 

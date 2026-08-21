@@ -178,9 +178,16 @@ export function contactRowFrom(
           isRoleAddress: email?.is_role_address === true,
         }
       : null,
-    // `companies` has no phone column — the trade register does not publish
-    // one. Null rather than a lookup that would always fail.
-    phone: null,
+    /*
+     * ANAF does publish phone numbers, and has been returning them since the
+     * first import — `AnafCompany.phone` was parsed and then dropped for want
+     * of a column. 98.2% of companies now carry one.
+     *
+     * Worth stating because the comment that used to sit here said the opposite
+     * and the UI repeated it to the user: a stale assumption about a source is
+     * indistinguishable from a fact until someone checks.
+     */
+    phone: optionalString(company?.phone) ?? null,
     importedAt: optionalDate(row.created_at) ?? new Date(0),
     list: list
       ? {

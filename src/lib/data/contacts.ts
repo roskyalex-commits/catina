@@ -31,7 +31,7 @@ export type ContactPage = {
  * `GenericStringError`.
  */
 export const LEAD_COLUMNS =
-  "id, company_id, score, score_breakdown, source_label, source_query, fit_feedback, agent_id, created_at, people(full_name, title), companies(name, domain, country, county, caen), emails(address, status, confidence, is_role_address), lists(id, name)";
+  "id, company_id, score, score_breakdown, source_label, source_query, fit_feedback, agent_id, created_at, people(full_name, title), companies(name, domain, country, county, caen, phone), emails(address, status, confidence, is_role_address), lists(id, name)";
 
 /**
  * Filtering runs here rather than in the page so that the same predicate serves
