@@ -4,13 +4,13 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `b11fbe2` — mailbox verification, and the chain wired end to end.
-- **Green:** 904 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
+- **Last commit:** `4d5e140` — guess-and-verify, suppressions, and the pattern prior measured.
+- **Green:** 923 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
 - **Data:** **17,156 companies** (5,406 with a website), **29,551
   decision-makers — now all with `first_name`/`last_name` resolved**, **401
   companies scanned for signals**, **9,455 enriched from ANAF** with **4,216
-  carrying a 2025 revenue figure**. `/app` renders **924 leads**; **64 carry a
-  signal**, and the best scores **76** rather than the old flat 45.
+  carrying a 2025 revenue figure**. `/app` renders **924 leads**; **180 signals** across
+  **112 companies**, and the best lead scores **79** rather than the old flat 45.
 - **Two structural gaps are closed.** Contactability (20% of the score) and
   signals (35%) both used to contribute exactly zero. Both now work. Read
   "The two constant zeros" below before anything else.
@@ -37,10 +37,22 @@ re-explained or re-derived. Update it when the answers change.
   addresses" below: the headline is that **every address it would have built
   was wrong**, because ONRC writes surnames first and the generator read them
   last.
-- **The ANAF financials pass is done.** 9,455 companies enriched, **4,216 with
-  a 2025 revenue figure**. `scan:signals` and `rescore:leads` have *not* been
-  re-run since, so those filings sit in the table without having become
-  `anaf_growth` signals. That is the cheapest score improvement available.
+- **The ANAF financials pass is done, and re-scored.** 9,455 companies
+  enriched, 4,216 with a 2025 revenue figure. `scan:signals --no-web --tier a`
+  turned those filings into **119 new signal rows** (180 total, from 64), and
+  `rescore:leads` moved **110 leads**. Best lead **79**, 31 above 60, 11 above
+  70 — and **18 leads disqualified by a distress signal**, which is the system
+  correctly refusing to spend outreach on companies being wound up.
+- **Guess-and-verify is built.** Per-company inference only fires on ~2.5% of
+  domains, so for the other 97.5% the waterfall now guesses the convention and
+  lets the mailbox settle it — the competitor's mechanism, done with a
+  verification step. Two economies keep it affordable on 600 checks a month: a
+  catch-all verdict stops the loop (further guesses return the identical
+  non-answer), and `unknown` stops it too (the check failed, not the address).
+- **The suppression list is wired.** `guardSend` and `evaluateCompliance` both
+  took `suppressed: boolean` and neither had ever been handed a real value.
+  `src/lib/outreach/suppressions.ts` reads and writes the table, a domain entry
+  shadows every address under it, and the lookup **fails closed**.
 - **Domain discovery by search is dead too.** Brave scored 8.3% on companies
   that already had a domain and **0.1% on the 746 lead companies that do not**.
   The first number was measured on a population biased toward findable
@@ -170,6 +182,26 @@ Two mapping rules carry the weight:
   this wrong would mark most of the register as confirmed.
 - **A quota error becomes `unknown`, never `invalid`.** The demotion is
   persisted and would outlive the outage.
+
+### What Romanian companies actually do — early reading
+
+`npm run measure:patterns` reports the distribution and, past 100 domains,
+recommends a reordering. Over the first 66:
+
+```
+first.last     32   48.5%
+first          26   39.4%
+last / first_last / lastfirst / f.last / last.first / flast   1-2 each
+```
+
+Two things follow. `first.last` leading confirms the shape the user saw from
+the competitor, and it is already what `PATTERNS_BY_PREVALENCE` tries first —
+which is the position that matters, since guess-and-verify stops at the first
+confirmation. And **`first` at 39% is a genuine local difference**: Romanian
+SMBs use a bare given name far more than the global norm, so it belongs high in
+the guess order even though global folk wisdom puts it fourth.
+
+Still below the 100-domain gate, so nothing has been reordered yet.
 
 ### Storing personal addresses is a decision that was taken
 
@@ -890,6 +922,19 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **Record that you looked, not only that you found.** The harvester's skip
+  list was keyed on `email_pattern` being set, so a resumed run re-crawled every
+  domain that had already answered "nothing here" — 518 fresh crawls, zero new
+  patterns. `email_pattern_checked_at` records the visit instead. This is the
+  same lesson `company_scans` was created for; it had simply not been applied
+  to the resume path. Any new "have we done this yet" check needs the same
+  question asked of it.
+- **A report that derives a label from the wrong column lies confidently.** The
+  first version of `measure:patterns` split domains into "confirmed against a
+  person" and "read off a shape" by testing `email_pattern_samples > 0` — true
+  for both — and so reported every domain as confirmed. The basis was simply
+  never stored. If a report distinguishes two kinds of evidence, something has
+  to have written down which one it was.
 - **A hit rate measured on companies that already have a domain says nothing
   about companies that do not.** `--measure` can only run where the right
   answer is already known, which restricts it to companies with a web presence —
