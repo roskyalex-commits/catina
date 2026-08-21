@@ -4,13 +4,33 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `b8583ff` — verified named contacts, on a real key.
-- **Green:** 944 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
-- **Data:** **17,156 companies** (5,406 with a website), **29,551
-  decision-makers — now all with `first_name`/`last_name` resolved**, **401
-  companies scanned for signals**, **9,455 enriched from ANAF** with **4,216
-  carrying a 2025 revenue figure**. `/app` renders **924 leads**; **180 signals** across
-  **112 companies**, and the best lead scores **79** rather than the old flat 45.
+- **Last commit:** `b4c7a4e` — the Bright Data probe, and what it ruled out.
+- **Green:** 971 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
+- **Data:** **17,156 companies** — 5,406 with a website, **16,850 (98.2%) with a
+  phone and a street address**, 9,455 enriched from ANAF. **29,551
+  decision-makers**, all with `first_name`/`last_name` resolved. **1,788 leads**
+  across two agents, **1,094 signals** on 788 companies, best lead **91**.
+
+### The one number that matters, and it is not a data-source problem
+
+Of 1,788 leads:
+
+| | | |
+|---|---|---|
+| name + company + **a real signal** | 1,788 | **100%** |
+| phone | 1,350 | 75.5% |
+| domain | 1,040 | 58.2% |
+| **any email** | 165 | **9.2%** |
+| named email | 30 | 1.7% |
+| **verified email** | **8** | **0.4%** |
+
+Every lead already has a named decision-maker and a clickable piece of evidence
+about why now. The entire bottleneck is turning a domain into a verified
+address, and that is blocked on **verification credits** — not on missing data.
+
+**Three vendors were evaluated and all three came back "no" or "not yet".** Do
+not re-open these without reading "What was ruled out, and why" below: the
+answers were measured, not assumed, and two of them saved money.
 - **Two structural gaps are closed.** Contactability (20% of the score) and
   signals (35%) both used to contribute exactly zero. Both now work. Read
   "The two constant zeros" below before anything else.
@@ -57,10 +77,98 @@ re-explained or re-derived. Update it when the answers change.
   that already had a domain and **0.1% on the 746 lead companies that do not**.
   The first number was measured on a population biased toward findable
   companies and does not transfer. See "Domains are the real ceiling".
-- **Next, in rough order of value:** get a `REOON_API_KEY` (600/month free, the
-  empty slot is already in `.env.local`) — without it a generated address is
-  never sendable and this whole line of work stops one step short; then re-scan
-  and re-score for the new ANAF filings; then Gmail OAuth.
+- **Next, in order of value per euro:**
+  1. **Reoon paid tier, $9/month.** The free allowance is spent. 875 leads have
+     a domain and no email; at the 60% hit rate measured on the mid-market
+     segment that is **~525 more contactable leads**. Nothing else buyable comes
+     close to that ratio.
+  2. **Gmail OAuth — free, and the real blocker.** Nothing has ever been sent.
+     Even the 8 perfect leads (verified named address, real signal, scoring
+     77–91) cannot be contacted. The product makes leads and then stops.
+  3. **Phone is a channel nobody is using.** **1,350 leads carry a phone**, free
+     from ANAF, needing no domain and no verification — 8× more reachable
+     contacts than email, and the only route for the 748 leads that will never
+     have one. Romanian SMB sales is phone-led. The UI shows the number; nothing
+     treats it as a channel.
+  4. Wire the suppression list into the send path before the first send.
+
+## New commands this session
+
+```bash
+npm run build:given-names     # regenerate the RO given-name lexicon
+npm run backfill:names        # split people.full_name into halves
+npm run harvest:patterns      # learn each company's email convention
+npm run measure:patterns      # the convention distribution + guess order
+npm run measure:firme         # gate a FirmeAPI subscription (needs free key)
+npm run measure:brightdata    # gate Bright Data (needs free key; see below)
+npm run enrich:emails -- --agent <id> --named   # chase the person, not office@
+npm run source -- --agent <id> --pages N        # size filters now actually apply
+```
+
+## What was ruled out, and why
+
+Three paid sources were evaluated in one sitting. Recording the reasoning
+because each looked obviously right beforehand.
+
+**FirmeAPI.ro (Romanian company data, ~€20/mo) — not bought.** Its headline is
+97% phone coverage and 40% websites. But ANAF had been returning `telefon` and
+`adresa` all along and we were discarding them for want of a column: adding two
+columns took phone coverage to **98.2% for free**, which deletes the main
+reason to subscribe. Its remaining pitch is `website` at 40% — measured across
+all 3M Romanian companies, where the ones *with* websites are exactly the ones
+ONRC already lists. `npm run measure:firme` is built and gated on the right
+population (domainless companies, not companies that already have a domain);
+it needs a free key, 1,000 credits, no card. **Run it before ever paying.**
+
+**Bright Data (LinkedIn job titles) — cannot work on the free tier.** Probed on
+a real key. URL collection works and the field mapping is correct — a control
+scrape returned `position`, `current_company`, `country_code` and the rest. But
+**discovery is unavailable**: `type=discover_new` returns `400 Incorrect
+discovery collector id. Available types:` with the list *empty*, on both live
+collectors. Every other LinkedIn dataset answers `This dataset does not support
+collection` — those are marketplace datasets you buy in bulk.
+
+So it can only scrape profiles whose URLs we already hold, and we hold none.
+Checked before concluding: of 40 mid-market company sites, **zero** linked a
+single `linkedin.com/in/` profile, though four in five linked their
+`linkedin.com/company/` page — verified against a control that fetched 500KB
+pages, so this is the market and not a broken crawler. The SERP API could find
+profile URLs on the same free credits but needs a zone created in the dashboard
+(`/status` reports `can_make_requests: false, zone_not_found`).
+
+**Job titles are a smaller prize than they look.** The ICP scores
+`scoreTitleMatch`, and 99% of our people are titled `administrator`. But of
+lead companies with a headcount figure, **66% are sole traders and only 4.8%
+have 20+ employees** — and for a three-person SRL the administrator *is* the
+buyer, so `administrator` is the correct title. LinkedIn data only pays where a
+separate department head exists, which is why the mid-market agent was built
+first. The client and matcher are kept: both correct, both tested, useful the
+moment there is a source of profile URLs.
+
+## The mid-market segment, and the bug that found it
+
+`Mid-market pilot` (agent `eaa9561f`) targets companies with **20+ employees**
+and holds **864 leads** — the segment exhausted exactly, which is the size
+filter proving itself.
+
+| | mid-market | the older leads |
+|---|---|---|
+| with a domain | **862 (99.8%)** | 178 (19.3%) |
+| with a revenue figure | **100%** | ~16% |
+| signal component | **0.257** | 0.037 |
+| leads ≥50 | **251** | 90 |
+| enrichment hit rate | **60%** | 12% |
+
+Companies with real headcount almost always have a website, so every downstream
+step works on them: sites to crawl, filed accounts to diff, and enough people
+that a department head plausibly exists.
+
+Building it exposed a defect worth remembering. **`scripts/run-sourcing.ts` had
+its own `findCompanies` that ignored `employeeMin`, `employeeMax` and both
+revenue bounds** — it applied only country, insolvency and CAEN. An agent asking
+for 20+ employees got the whole register, and the run reported success either
+way, because it prints *leads created*, not *leads correctly filtered*. Both
+callers now share `applyIcpRangeFilters` in `src/lib/sources/anaf/adapter.ts`.
 
 ## Real people, real addresses, without LinkedIn
 
@@ -960,6 +1068,38 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **Check what the free source already returns before buying it.** `AnafCompany`
+  had parsed `phone` and `address` since the first import and `enrich-registry.ts`
+  dropped both for want of a column. Adding two columns took phone coverage from
+  0 to **98.2%**, free, and removed the main reason to subscribe to a vendor
+  selling exactly that at five credits a company. The parsed-but-discarded field
+  is a recurring shape here; grep the client types before pricing a purchase.
+- **A vendor's quota is the truth; `CreditLedger` is an estimate.** Reoon began
+  answering `403 {"reason":"Not enough credits available"}` while the ledger
+  still read 366 of a 600 limit taken from documentation — so either the free
+  tier is smaller than advertised or a power-mode check costs more than one
+  credit. 198 calls went out after exhaustion, each mapped to `unknown`, and the
+  run reported **"0 verified"** — indistinguishable from every address being
+  bad. Exhaustion now latches from the vendor's own wording (403 + "credits",
+  *not* the 402 you would expect) and the guess loop stops. **Never let a local
+  count be the authority on someone else's balance.**
+- **A size filter also narrows to companies that filed accounts.** `gte` on a
+  nullable column excludes nulls, and `employees_anaf` is null for the 75% with
+  no filed accounts. `employeeMin: 20` therefore means "20+ *and* we know the
+  headcount". That is correct — "we cannot tell" is not "big enough" — but it
+  explains a page that comes back short.
+- **Only the first three entries of `PATTERNS_BY_PREVALENCE` exist.**
+  `generateCandidates` caps a blind guess at three, so anything below position
+  three is never generated and the companies using it are unreachable. The list
+  was global folk ordering: it spent a slot on `firstlast` (**0%** of Romanian
+  domains) and put `first` at position four (**28%**). Reordering took reachable
+  coverage from **59.2% to 87.4%**. Re-measure with `npm run measure:patterns`
+  before touching it.
+- **A report that scores "never tried" as free will recommend the worse
+  option.** The first version of `measure:patterns` summed `share × position`
+  over the first three only, so a convention that is never generated cost
+  nothing and the *worse* order looked cheaper. Unreachable is the most
+  expensive outcome there is, not the cheapest. Coverage first, cost second.
 - **A failed crawl is not an answer.** `fetchContactAddresses` returned a bare
   array, so "we read the site and it publishes nothing" and "we could not read
   the site" were indistinguishable — and the harvester recorded both as
