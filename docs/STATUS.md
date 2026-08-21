@@ -4,8 +4,8 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `b4c7a4e` — the Bright Data probe, and what it ruled out.
-- **Green:** 971 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
+- **Last commit:** `5a97361` — the outreach system, wired to the app.
+- **Green:** 1,023 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
 - **Data:** **17,156 companies** — 5,406 with a website, **16,850 (98.2%) with a
   street address** and **12,097 (70.5%) with a phone number** — ANAF stores an
   empty string, not null, for the other 4,753, so `not null` overcounts it.
@@ -79,20 +79,26 @@ answers were measured, not assumed, and two of them saved money.
   that already had a domain and **0.1% on the 746 lead companies that do not**.
   The first number was measured on a population biased toward findable
   companies and does not transfer. See "Domains are the real ceiling".
+- **Outreach is built and runs.** Draft → queue → guard → Gmail, proven against
+  the real database as far as Google's own hop. Read "The outreach system"
+  below and `docs/OUTREACH.md`. **Still nothing sent** — the last step needs a
+  Google Cloud OAuth client, which is 15 minutes and cannot be automated.
 - **Next, in order of value per euro:**
-  1. **Reoon paid tier, $9/month.** The free allowance is spent. 875 leads have
+  1. **A Google Cloud OAuth client — free, 15 minutes, and the last blocker.**
+     Everything either side of it is built and tested. `docs/OUTREACH.md` has
+     the steps; the scopes are deliberately all *sensitive* and none
+     *restricted*, which avoids a $540–1,000 annual CASA audit.
+  2. **Reoon paid tier, $9/month.** The free allowance is spent. 875 leads have
      a domain and no email; at the 60% hit rate measured on the mid-market
-     segment that is **~525 more contactable leads**. Nothing else buyable comes
-     close to that ratio.
-  2. **Gmail OAuth — free, and the real blocker.** Nothing has ever been sent.
-     Even the 8 perfect leads (verified named address, real signal, scoring
-     77–91) cannot be contacted. The product makes leads and then stops.
+     segment that is **~525 more contactable leads**. Measured, not guessed:
+     the first drafting run skipped **360 of 400 leads for `no email address`**,
+     which is the same bottleneck seen from the other end.
   3. **Phone is a channel nobody is using.** **1,350 leads carry a phone**, free
      from ANAF, needing no domain and no verification — 8× more reachable
      contacts than email, and the only route for the 748 leads that will never
-     have one. Romanian SMB sales is phone-led. The UI shows the number; nothing
-     treats it as a channel.
-  4. Wire the suppression list into the send path before the first send.
+     have one. Romanian SMB sales is phone-led. The lead row and its detail now
+     show the number as a `tel:` link; nothing yet treats it as a *channel*
+     (no call list, no logging, no disposition).
 
 ## New commands this session
 
@@ -100,12 +106,111 @@ answers were measured, not assumed, and two of them saved money.
 npm run build:given-names     # regenerate the RO given-name lexicon
 npm run backfill:names        # split people.full_name into halves
 npm run harvest:patterns      # learn each company's email convention
+npm run outreach:draft        # leads -> drafted messages (start with --dry-run)
+npm run outreach:send         # drafted messages -> Gmail (start with --dry-run)
 npm run measure:patterns      # the convention distribution + guess order
 npm run measure:firme         # gate a FirmeAPI subscription (needs free key)
 npm run measure:brightdata    # gate Bright Data (needs free key; see below)
 npm run enrich:emails -- --agent <id> --named   # chase the person, not office@
 npm run source -- --agent <id> --pages N        # size filters now actually apply
 ```
+
+## The outreach system
+
+Six modules — a Gmail client, a MIME builder, a drafter, a compliance
+evaluator, a send guard, a suppression list — existed, were tested, and had
+never been reached by anything. The product found leads and stopped. That gap
+is now closed as far as Google's own hop.
+
+```
+leads ──▶ outreach:draft ──▶ messages (drafted) ──▶ outreach:send ──▶ Gmail
+          eligibility +                             guard +            drafts
+          one model call                            mailbox            or sends
+```
+
+`docs/OUTREACH.md` is the operator's guide, including the Google Cloud setup.
+
+### What has actually run
+
+On the `Cluj software` agent, against the live database:
+
+```
+400 leads considered
+Eligible: 26
+
+Skipped:
+    360  no email address
+      7  no signal to open with
+      4  company in distress
+      3  address never confirmed
+```
+
+Three were drafted, in Romanian, each opening with the company's own signal:
+
+| person | company | opened with |
+|---|---|---|
+| Marușca Vlad Gavril | REDBEE SOFTWARE | Runs WooCommerce today |
+| Finta Ionuț-Andrei | ITIZED | Mentions "ERP" on their homepage |
+| Ciudin Paula | SOFT SERVICE SOLUTIONS | Mentions "ERP" on their homepage |
+
+`outreach:send --dry-run` then walked all three through the guard, and the real
+run stopped at the mailbox with instructions. **Nothing has been sent.** The
+only untested hop is Google's, and it needs an OAuth client.
+
+That skip breakdown is worth keeping: **90% of leads are skipped for having no
+address at all**. The eligibility rules are not the bottleneck, and no rule
+change will move this number — verification credits will.
+
+### Decisions inside it, so they are not re-argued
+
+- **Draft mode is the default and is not a lesser mode.** With `auto_send` off,
+  each message becomes a real draft in the user's own Gmail; they read it, edit
+  it, press send. That removes the research and the writing and leaves the
+  judgement with the person whose name is on the message.
+- **`pattern` addresses are excluded by default.** A `pattern` address is
+  `first.last@domain` with nobody having checked that the mailbox exists. Bounce
+  rate is the strongest single input to whether the *next* message lands in a
+  spam folder, so `--allow-unverified` exists to make including them a
+  deliberate act rather than a default.
+- **A distress signal disqualifies rather than opens.** `scoreLead` already
+  docks it, but a score is a suggestion. "I saw you've entered insolvency
+  proceedings" is the worst opening line this system could produce.
+- **`skipped` and `deferred` are different answers.** A suppression is
+  permanent; a daily cap or a rate limit is a statement about the next few
+  minutes. Collapsing them abandons a campaign the first day it hits its own
+  limit.
+- **The daily cap counts `messages` rows, not `email_accounts.daily_sent_count`.**
+  A counter drifts when a send succeeds and the write does not; a row in state
+  `sent` with a `sent_at` cannot.
+- **The unsubscribe endpoint completes on POST with no confirmation.** That is
+  what Gmail's native button issues (RFC 8058). A "are you sure?" page there
+  unsubscribes nobody who used the button, which is most people. The link
+  carries the message id — a v4 UUID — so the recipient's address never lands
+  in a URL that reaches proxy logs or referrer headers.
+- **Both model keys work.** `draftMessage` used to construct the Anthropic SDK
+  directly, which made the one feature the product exists for dead for anyone
+  without a paid Anthropic account. It now takes a `StructuredExtractor`, the
+  same seam the ICP analysis uses. Claude still wins when both keys are set.
+- **The send scopes are all *sensitive*, none *restricted*.** `gmail.send` +
+  `gmail.compose` + `userinfo.email`. Reaching for `gmail.modify` or
+  `https://mail.google.com/` would trip Google's CASA Tier 2 assessment —
+  $540–1,000 plus annual recertification — for convenience this product does
+  not need.
+
+### The security-relevant part
+
+The OAuth `state` parameter is not decoration. Without it, anyone can hand a
+signed-in user a callback carrying **their own** authorisation code, and the app
+would attach the attacker's mailbox to the victim's workspace — after which
+every message the victim's agent sends leaves from an inbox the attacker reads.
+It is an httpOnly cookie, compared in constant time, cleared after use, and the
+callback checks it **before** exchanging the code. The callback also asks Google
+which account it actually got rather than assuming the session's, because the
+consent screen lets the user pick a different one.
+
+`email_accounts` denies all user access by RLS. Every function in `mailbox.ts`
+therefore takes the service role *and* takes `orgId` separately: with RLS
+bypassed, the `.eq("org_id", …)` is the tenancy boundary.
 
 ## What was ruled out, and why
 
@@ -1071,6 +1176,27 @@ unsubscribe endpoint, Copilot.
 
 ## Landmines
 
+- **`agents.is_active` is a plan-cap flag, not a statement about the agent.**
+  `agent:toggle` flips it to free the free plan's single slot, and both agents
+  holding this workspace's 995 leads sit at `is_active = false` while their
+  `status` reads `active`. `outreach:draft` filtered a *named* `--agent` on it
+  and answered "No such agent" for an agent that plainly exists. Filter the
+  automatic choice on it; never a named id.
+- **`phone` is `""`, not NULL, for a quarter of companies.** ANAF files an empty
+  string. `.not("phone", "is", null)` returns 16,850; non-empty returns 12,097.
+  The first number was reported as 98.2% coverage in this document for a day.
+  `not null` is not the same predicate as "has one" — check for `""` on every
+  registry text column before quoting a coverage figure.
+- **A `try` around a Gmail call must not also enclose the write that records
+  it.** `sendOne` did, so a message Gmail had *accepted* whose database write
+  then failed was marked `failed` — a candidate for a retry that sends it twice.
+  Caught by a test before it shipped; the boundary is load-bearing, and there is
+  a comment on it saying so.
+- **A campaign starts as `draft`, and `guardSend` calls that "paused".** A first
+  send therefore refused every message for a campaign nobody had ever paused.
+  Checked once up front now, with `--activate` as the fix. Watch for the same
+  shape elsewhere: a guard whose message describes a *transition* when the real
+  state is *never started*.
 - **One unreproduced test failure, recorded rather than explained away.** A full
   run reported `1 failed | 970 passed` once and has since passed **seven**
   consecutive times with no detail captured. Prime suspects are the two suites
