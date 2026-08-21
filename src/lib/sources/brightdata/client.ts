@@ -30,9 +30,34 @@ import { z } from "zod";
  * have won in US courts on this question (Meta and X, 2024). That is the
  * strongest available position, not a guarantee.
  *
- * Shapes below are coded from published documentation and have **not** been
- * observed against the live API — hence `--probe` in the measurement script and
- * the deliberately lenient parsing.
+ * ## What the probe established, on a real key
+ *
+ * The field shapes below are now **observed**, not documented: a control run
+ * against a known profile returned `name`, `first_name`, `last_name`,
+ * `position`, `current_company` (an object with `name`), `current_company_name`,
+ * `city`, `country_code` and `url`. `toProfile` maps them correctly.
+ *
+ * **But discovery is not available.** Triggering with `type=discover_new` on
+ * either live collector — LinkedIn people profiles or LinkedIn company
+ * information — returns `400 Incorrect discovery collector id. Available
+ * types:` with the list *empty*. Every other LinkedIn dataset on the account
+ * answers `This dataset does not support collection`: those are marketplace
+ * datasets, bought in bulk rather than triggered.
+ *
+ * So on the free tier this client can only scrape profiles whose URLs we
+ * already hold, and we hold none. Two things were checked before concluding
+ * that:
+ *
+ *   - Company websites do not supply them. Of 40 mid-market sites crawled,
+ *     **zero** linked a single `linkedin.com/in/` profile — though four in five
+ *     did link their `linkedin.com/company/` page. Romanian companies of this
+ *     size publish a corporate presence, not their staff.
+ *   - The SERP API, which shares the same free credits and could find profile
+ *     URLs by search, needs a zone created in the dashboard first:
+ *     `/status` reports `can_make_requests: false, zone_not_found`.
+ *
+ * The client is kept because it is correct and the blocker is account-level,
+ * not code. It becomes useful the moment there is a source of profile URLs.
  */
 
 const BASE = "https://api.brightdata.com/datasets/v3";
