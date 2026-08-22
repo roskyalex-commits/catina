@@ -640,25 +640,58 @@ async function writeAll(
       city: company.city ?? null,
       reg_com: company.regCom ?? null,
       legal_form: company.legalForm ?? null,
-      // `undefined` is omitted from the payload, so PostgREST leaves the stored
-      // value alone. `null` would blank it.
-      caen: keepCaen.has(company.cui ?? "") ? undefined : (company.caen ?? null),
-      caen_label: keepCaen.has(company.cui ?? "") ? undefined : (company.caenLabel ?? null),
+      caen: company.caen ?? null,
+      caen_label: company.caenLabel ?? null,
       onrc_status: onrcStatus ?? null,
       registration_date: company.registrationDate ?? null,
       source: company.source,
     }));
 
-    const { error } = await supabase
-      .from("companies")
-      .upsert(batch, { onConflict: "cui", ignoreDuplicates: false });
+    /*
+     * Two upserts, split by whether the row keeps the CAEN already stored.
+     *
+     * `undefined` does **not** omit a column from a *bulk* upsert. PostgREST
+     * needs one column set for the whole batch, so a key other rows carry gets
+     * filled in as NULL for the rows that leave it out. That is how the first
+     * version of this guard blanked **52,983** CAENs while printing a line
+     * saying it was keeping them. A single-row update behaves the way I
+     * assumed; a batch does not.
+     *
+     * Splitting keeps each payload uniform, so a column a batch never mentions
+     * is genuinely left alone.
+     */
+    const keeping = batch.filter((row) => keepCaen.has(row.cui ?? ""));
+    const setting = batch.filter((row) => !keepCaen.has(row.cui ?? ""));
 
-    if (error) {
-      console.error(`\nBatch at ${i} failed: ${error.message}`);
-      console.error(`Wrote ${written} before failing. Re-running is safe —`);
-      console.error("the upsert is keyed on cui, so nothing duplicates.");
-      process.exit(1);
+    for (const [rows, withCaen] of [
+      [setting, true],
+      [keeping, false],
+    ] as const) {
+      if (rows.length === 0) continue;
+
+      const payload = withCaen
+        ? rows
+        : rows.map((row) => {
+            // Built by omission rather than destructuring, so the two dropped
+            // keys do not become unused bindings the linter has to be told about.
+            const kept: Record<string, unknown> = { ...row };
+            delete kept.caen;
+            delete kept.caen_label;
+            return kept;
+          });
+
+      const { error } = await supabase
+        .from("companies")
+        .upsert(payload, { onConflict: "cui", ignoreDuplicates: false });
+
+      if (error) {
+        console.error(`\nBatch at ${i} failed: ${error.message}`);
+        console.error(`Wrote ${written} before failing. Re-running is safe —`);
+        console.error("the upsert is keyed on cui, so nothing duplicates.");
+        process.exit(1);
+      }
     }
+
     written += batch.length;
     process.stdout.write(`\r  wrote ${written}/${ready.length}`);
   }
