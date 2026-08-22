@@ -233,6 +233,79 @@ of it to `--active-only`. It now over-reads by `LIMIT_OVERSHOOT` and truncates
 at the end, so the number given is an upper bound on rows written, and a run
 that still comes up short says so.
 
+## Where the email addresses actually came from
+
+Worth settling, because the intuition is wrong in an expensive direction. Every
+address on file, by provenance:
+
+| provider | count | share |
+|---|---|---|
+| **`crawler`** — read off the company's own website | **3,051** | **99.0%** |
+| `pattern` — guessed `first.last@`, unverified | 22 | 0.7% |
+| `pattern-verified` — guessed, then confirmed by Reoon | **8** | **0.26%** |
+
+**Reoon produced eight addresses.** It has spent 366 of its 600 free credits and
+was never the mechanism. Neither was any vendor. 1,947 of the crawled addresses
+are role addresses (`office@`, `contact@`) published openly on a contact page.
+
+So the equation for this product is one line:
+
+> **domains × ~32% = companies with an address, at zero marginal cost.**
+
+3,081 addresses across 1,731 companies came from 5,406 domains. The 348,044
+companies imported since have **no domains**, which is exactly why they have no
+addresses. Verification is for confirming a *guess* when a site publishes
+nothing; it is not how addresses are found.
+
+**Domains are the only metered input in the entire pipeline.** Everything either
+side of them — the register, the people, the phones, ANAF, the crawl, the
+extraction — is free.
+
+## The SaaS shape, and why the schema already fits it
+
+The tenancy split was drawn in the right place from the start and it is what
+makes the economics work:
+
+| shared corpus, one copy for everyone | per tenant, RLS-scoped |
+|---|---|
+| `companies`, `people`, `emails` | `agents`, `leads`, `campaigns` |
+| `signals`, `company_scans` | `messages`, `lists`, `suppressions` |
+
+Enrichment writes the **shared** side. A domain found for `SFERO SRL` is found
+once and is then true for every customer who ever targets that company. Lead
+rows — the per-customer artefact — are cheap joins on top.
+
+The consequence: **marginal cost per subscriber approaches zero.** The corpus is
+a fixed cost paid once and amortised across everyone, which is precisely the
+thing an international tool cannot replicate for Romania, and the reason not to
+enrich per query.
+
+### What the corpus costs to build
+
+| input | unit cost | status |
+|---|---|---|
+| companies, names, addresses | free — ONRC export | **done, 351,694** |
+| phones, VAT, e-Factura, distress | free — ANAF, 100 CUIs/request | **done, 192,916 phones** |
+| **domains** | **$1.50–4 per 1,000 Maps places** | 5,402 — the gap |
+| addresses from domains | free — our crawler, 28.2% role / 8.6% personal | follows domains |
+| verifying a guess | $24 per 25,000 (Reoon lifetime) | barely used |
+
+**Upper bound for all of Romania:** one Maps listing per trading company,
+1,777,974 × $1.50/1,000 = **about $2,670**, once. Fewer in practice — a holding
+company with no premises has no listing.
+
+### The yield improves as the corpus grows
+
+The measured 12.6% new-domain-per-place is a **floor, not a rate**. It was
+limited by the join: only 15.9% of listings matched a company we hold, because
+we hold 35% of Cluj. The other 84% of domains were discarded for want of a
+company to attach them to.
+
+Hold all of Romania and that discard rate collapses toward the 71.4% of listings
+that carry a domain at all. **Each euro of scraping buys more domains the more
+of the register we already hold**, which argues for finishing the import before
+scaling the scraping, not the other way round.
+
 ## Google Maps: measured, and it clears the bar
 
 Run on a real Apify token, free credits, 454 places across five Romanian search
