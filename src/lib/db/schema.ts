@@ -10,6 +10,7 @@
  * policy in `drizzle/policies.sql`. A table without `orgId` is either global
  * reference data (`companies`) or auth-owned.
  */
+import { sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -284,6 +285,30 @@ export const companies = pgTable(
     index("companies_country_city_idx").on(t.country, t.city),
     // The exact shape of the seeded-slice query the ANAF adapter runs.
     index("companies_country_vat_caen_idx").on(t.country, t.vatRegistered, t.caen),
+    /**
+     * The index that keeps a sourcing run inside its request.
+     *
+     * Every ICP with a headcount band produces
+     * `… employees_anaf between a and b … order by id limit 25`, and the
+     * planner answers `ORDER BY id LIMIT` by walking the primary key and
+     * filtering. That is fine until the table is mostly rows the filter throws
+     * away: at 351,694 companies only **4,290 have `employees_anaf` at all**,
+     * so the scan removed 63,750 rows without finding 25 and the statement
+     * timed out at 15s. The wizard's own preview 500'd.
+     *
+     * Partial on exactly the rows a size filter can ever match, so it holds
+     * ~4,290 entries in `id` order instead of 351,694. Measured: **20.9s to
+     * 326ms** with a CAEN filter, and 0.7ms without one.
+     *
+     * `insolvency_status is null` is in the predicate because the adapter
+     * always applies it — a distressed company is never a lead — so including
+     * it costs nothing and keeps the index smaller.
+     */
+    index("companies_sized_idx")
+      .on(t.id)
+      .where(
+        sql`${t.employeesAnaf} is not null and ${t.insolvencyStatus} is null`,
+      ),
   ],
 );
 

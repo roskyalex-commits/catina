@@ -1,0 +1,1 @@
+CREATE INDEX "companies_sized_idx" ON "companies" USING btree ("id") WHERE "companies"."employees_anaf" is not null and "companies"."insolvency_status" is null;
