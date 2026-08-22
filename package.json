@@ -31,6 +31,7 @@
     "measure:patterns": "tsx scripts/measure-email-patterns.ts",
     "measure:firme": "tsx scripts/measure-firme.ts",
     "measure:brightdata": "tsx scripts/measure-brightdata.ts",
+    "measure:maps": "tsx scripts/measure-maps.ts",
     "build:industries": "tsx scripts/build-industries.ts",
     "build:given-names": "tsx scripts/build-given-names.ts",
     "repair:caen-labels": "tsx scripts/repair-caen-labels.ts",
