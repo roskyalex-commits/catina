@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalise } from "./analyze";
 import { naceCodesFor } from "./industries";
+import { icpSchema } from "./schema";
 
 /**
  * `normalise` is the seam between what the model returns and what the app
@@ -21,8 +22,6 @@ const base = {
   keywords: ["facturare", "e-factura"],
   competitors: ["SmartBill", "Oblio"],
   exclusions: ["Enterprise ERP vendors"],
-  employeeMin: 5,
-  employeeMax: 250,
   confidence: 0.8,
   assumptions: [],
 };
@@ -35,8 +34,6 @@ describe("normalise", () => {
     // of exactly those industries and nothing the model made up.
     expect(icp.industryKeys).toEqual(["accounting_legal", "retail"]);
     expect(icp.caenCodes).toEqual(naceCodesFor(["accounting_legal", "retail"]));
-    expect(icp.employeeMin).toBe(5);
-    expect(icp.employeeMax).toBe(250);
     expect(icp.countries).toEqual(["RO"]);
   });
 
@@ -63,16 +60,29 @@ describe("normalise", () => {
     expect(icp.industryKeys).not.toContain("teleportation");
   });
 
-  it("treats 0 headcount as unknown rather than a literal bound", () => {
-    const icp = normalise({ ...base, employeeMin: 0, employeeMax: 0 });
+  it("never infers a headcount band, whatever the site says", () => {
+    /*
+     * A seller's homepage does not state its buyers' headcount, and the model
+     * used to guess one anyway — revnet.ro got "5 to 250" from a page
+     * mentioning neither number.
+     *
+     * The guess was expensive: a band compiles to
+     * `employees_anaf between a and b`, and `gte` on a nullable column excludes
+     * nulls, so it silently restricts the search to companies that have filed
+     * annual accounts — 4,290 of 351,694. A user who never asked for a size
+     * filter would lose 98.8% of the database and see no reason why.
+     */
+    const icp = normalise(base);
     expect(icp.employeeMin).toBeNull();
     expect(icp.employeeMax).toBeNull();
   });
 
-  it("drops a reversed headcount range", () => {
-    const icp = normalise({ ...base, employeeMin: 500, employeeMax: 10 });
-    expect(icp.employeeMin).toBe(500);
-    expect(icp.employeeMax).toBeNull();
+  it("still carries the band when a user sets one deliberately", () => {
+    // The capability is not removed, only the guess. `applyIcpRangeFilters`
+    // honours whatever ends up on the stored ICP.
+    const icp = icpSchema.parse({ ...normalise(base), employeeMin: 20, employeeMax: 250 });
+    expect(icp.employeeMin).toBe(20);
+    expect(icp.employeeMax).toBe(250);
   });
 
   it("upper-cases country codes and drops non-alpha-2 entries", () => {

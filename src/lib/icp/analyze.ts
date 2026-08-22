@@ -83,14 +83,6 @@ const extractionSchema = z.object({
       "Segments to keep out: named competitors, bad-fit verticals, existing " +
         "customers visible on the site.",
     ),
-  employeeMin: z
-    .number()
-    .int()
-    .describe("Smallest target company headcount. 0 if unknown."),
-  employeeMax: z
-    .number()
-    .int()
-    .describe("Largest target company headcount. 0 if unknown."),
   confidence: z
     .number()
     .describe("0-1: how well the site supported this inference."),
@@ -176,16 +168,8 @@ function splitCompetitors(competitors: string[]): {
   return { competitorTech: tech, competitorNames: names.slice(0, 15) };
 }
 
-/** 0 is the model's "unknown" sentinel for headcount; treat it as unset. */
-function headcount(value: number): number | null {
-  return Number.isFinite(value) && value > 0 ? Math.round(value) : null;
-}
-
 /** Exported for tests — this is the layer that absorbs model slips. */
 export function normalise(raw: z.infer<typeof extractionSchema>): Icp {
-  const employeeMin = headcount(raw.employeeMin);
-  const employeeMax = headcount(raw.employeeMax);
-
   const candidate = {
     valueProp: raw.valueProp.trim(),
     productName: raw.productName?.trim() || undefined,
@@ -203,13 +187,28 @@ export function normalise(raw: z.infer<typeof extractionSchema>): Icp {
     keywords: dedupe(raw.keywords).slice(0, 20),
     ...splitCompetitors(raw.competitors ?? []),
     exclusions: dedupe(raw.exclusions).slice(0, 20),
-    employeeMin,
-    // A reversed range is a model slip, not a user intent — drop the max.
-    employeeMax:
-      employeeMax !== null && employeeMin !== null && employeeMax < employeeMin
-        ? null
-        : employeeMax,
-    // Not inferable from a website; the user sets these in step 2.
+    /*
+     * Never inferred, and no longer even asked of the model.
+     *
+     * A seller's own homepage does not say what headcount its buyers have.
+     * The model guessed one anyway — revnet.ro, a Bucharest web agency, got
+     * "5 to 250" from a page that mentions neither number — and the guess was
+     * not free: a headcount band compiles to
+     * `employees_anaf between a and b`, and `gte` on a nullable column excludes
+     * nulls, so it silently narrows the search to companies that have **filed
+     * annual accounts**. That is 4,290 of 351,694 — **1.2%** — and the other
+     * 98.8% become unreachable for a reason the user never chose and cannot
+     * see.
+     *
+     * The capability stays: both fields are still on `Icp`, still stored, still
+     * editable in the wizard, and `applyIcpRangeFilters` still honours them. A
+     * user who *means* "20+ employees" gets exactly that, including the
+     * filed-accounts narrowing, because they asked for it.
+     *
+     * Revenue was already treated this way, for the same reason.
+     */
+    employeeMin: null,
+    employeeMax: null,
     revenueMinRon: null,
     revenueMaxRon: null,
     confidence: Math.min(1, Math.max(0, raw.confidence)),
