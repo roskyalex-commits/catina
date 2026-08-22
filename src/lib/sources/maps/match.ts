@@ -10,11 +10,19 @@ import { companyMatches } from "@/lib/sources/brightdata/match";
  *
  * ## Why phone is the primary key
  *
- * Measured on the live database: of 11,302 distinct normalised phone numbers,
- * **10,763 belong to exactly one company — 95.2%**. The worst case is 26
- * companies sharing a number (an accountant's office, or a group's switchboard),
- * which is why a shared number falls through to the name check rather than
- * picking the first row.
+ * Measured on the live database: of 146,941 distinct normalised numbers,
+ * **133,175 belong to exactly one company — 90.6%**.
+ *
+ * That figure moves, and it moves the wrong way. It was **95.2%** when the
+ * database held 17,156 companies; at 351,694 it is 90.6%, and inside Cluj —
+ * the county covered most densely — it is **58.5%**, with one number shared by
+ * **622 companies**. Romanian SRLs share an accountant's or owner's line, so
+ * every company added to a county makes a collision more likely.
+ *
+ * Which is exactly why a shared number falls through to the name check instead
+ * of taking the first row. On the first real run only 41.7% of successful joins
+ * came from the phone; a matcher that trusted it alone would have attached a
+ * stranger's website to a lead, silently, hundreds of times.
  *
  * 76.7% of those numbers are mobile (`07…`), which for a Romanian SRL is
  * usually the administrator's own line and is close to a personal identifier.

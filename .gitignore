@@ -47,3 +47,4 @@ cloudflare-env.d.ts
 
 # allow the env template
 !.env.example
+public/__dev-session.js

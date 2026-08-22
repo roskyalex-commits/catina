@@ -233,6 +233,67 @@ of it to `--active-only`. It now over-reads by `LIMIT_OVERSHOOT` and truncates
 at the end, so the number given is an upper bound on rows written, and a run
 that still comes up short says so.
 
+## Google Maps: measured, and it clears the bar
+
+Run on a real Apify token, free credits, 454 places across five Romanian search
+terms in Cluj-Napoca (`firma de contabilitate`, `agentie de marketing`,
+`firma de software`, `birou de avocatura`, `firma de consultanta`).
+
+| | | |
+|---|---|---|
+| 1. carry a real domain — not a Facebook or eMAG page | 324 | **71.4%** |
+| 2. carry a phone number | 424 | 93.4% |
+| 3. join back to a company we hold | 72 | **15.9%** |
+| 4. **AND we had no domain for it** | **57** | **12.6%** |
+
+**71.4% against the trade register's 0.34%.** That is the whole finding: Romanian
+SMBs publish a website on their Google Business Profile and not to ONRC, by a
+factor of about two hundred.
+
+**$0.024 per newly reachable company** at $3/1,000 places. For scale: 5,000 new
+domains is roughly 40,000 places, about $120 — against 5,402 domains held today
+after eighteen months of everything else.
+
+Real examples it attached, none of which we could reach before:
+`operandivision.ro`, `klain.ro`, `sfero.ro`, `cvbfinance.com`, `talus.ro`,
+`learningandconsulting.ro`, `euroeval.ro`.
+
+### The lever is the join, not the source
+
+Number 3 is the weak one and it is worth understanding before spending. Only
+15.9% of listings matched a company we hold, so **84% of the domains Maps
+returned were thrown away**. Two reasons, and only one is fixable:
+
+- We hold 33,454 of Cluj's 95,956 trading companies — **35%** — and only in nine
+  sectors. A perfect matcher still could not clear that ceiling.
+- Google lists a *trading* name (`Scatcont`) where the register holds a *legal*
+  one (`SCATCONT CONTABILITATE SRL`). `companyMatches` is deliberately strict
+  and refuses anything it cannot be sure of.
+
+Moving the join from 15.9% toward the 35% ceiling would roughly halve the cost
+per domain. That is worth more than any discount on the scraping.
+
+### Correction: phone uniqueness degrades as coverage densifies
+
+`match.ts` was built on "95.2% of phone numbers identify exactly one company",
+measured when the database held 17,156 companies. At 351,694 it is:
+
+| population | numbers | unique to one company |
+|---|---|---|
+| all companies, today | 146,941 distinct | **133,175 — 90.6%** |
+| Cluj alone, densest coverage | 13,012 distinct | **7,609 — 58.5%** |
+| worst case | | **622 companies on one number** |
+
+The mechanism is obvious in hindsight: Romanian SRLs share their accountant's
+or owner's line, so the denser the coverage of a county, the more often two
+companies collide on one number. It showed up directly in the run — only
+**41.7%** of successful joins came from the phone; the rest fell through to
+name-within-county.
+
+That fallback existing is why the run worked at all. A matcher that trusted the
+phone alone would have taken the first of 622 companies and attached a
+stranger's website to a lead, silently.
+
 ## The outreach system
 
 Six modules — a Gmail client, a MIME builder, a drafter, a compliance
@@ -1353,13 +1414,19 @@ unsubscribe endpoint, Copilot.
   Checked once up front now, with `--activate` as the fix. Watch for the same
   shape elsewhere: a guard whose message describes a *transition* when the real
   state is *never started*.
-- **One unreproduced test failure, recorded rather than explained away.** A full
-  run reported `1 failed | 970 passed` once and has since passed **seven**
-  consecutive times with no detail captured. Prime suspects are the two suites
-  that spy on `globalThis.fetch` — `verifiers/reoon.test.ts` and
-  `crawl/contact-harvest.test.ts` — though both restore in `afterEach`. If it
-  recurs, capture the name before re-running; a flake that is never named is a
-  bug that gets blamed on flakiness.
+- **An unreproduced test failure, now seen twice, and still not named.** A full
+  run reported `1 failed | 970 passed` once; a later session saw
+  `1 failed | 1070 passed`. **Both times the name was not captured before
+  re-running** — the second time in spite of this entry saying to capture it,
+  which is worth recording as its own lesson about how easy that is to skip.
+  Eleven clean runs between and after. Prime suspects remain the two suites that
+  spy on `globalThis.fetch` — `verifiers/reoon.test.ts` and
+  `crawl/contact-harvest.test.ts` — though both restore in `afterEach`, and both
+  ran under load from a large background import on the second occasion.
+
+  **If it happens again, do not re-run first.** `npm test 2>&1 | tee /tmp/t.log`
+  and read the log. A flake that is never named is a bug that gets blamed on
+  flakiness.
 - **`npm test | grep` does not gate a `&&` chain.** grep exits 0 when it matches
   the summary line, so a red suite still lets the commit through. That is
   exactly how the failure above got committed. Same trap as the earlier

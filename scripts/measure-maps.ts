@@ -34,7 +34,14 @@
  *
  * **3. How many join back to a company we already hold.** A website with no
  * CUI beside it is not a lead: no administrator, no financials, no signals.
- * Phone is the primary key at 95.2% uniqueness; see `match.ts`.
+ * Phone is the primary key, at 90.6% uniqueness nationally and 58.5% inside the
+ * most densely covered county; see `match.ts` for why that number degrades and
+ * why the name fallback carries more of the load than it looks like it should.
+ *
+ * Measured at 15.9% on the first real run, which means 84% of the domains Maps
+ * returned were discarded. Read that as the lever it is: we hold 35% of Cluj's
+ * trading companies, so the ceiling is 35%, and closing the gap to it is worth
+ * more than any discount on the scraping.
  *
  * **4. Of the joins, how many are companies we have NO domain for.** This is
  * the number that decides. Everything else can look excellent and the exercise
