@@ -602,6 +602,32 @@ async function writeAll(
 
   await dropConflictingDomains(supabase, ready);
 
+  /*
+   * Which companies already have a CAEN we must not overwrite.
+   *
+   * `companies.caen` holds *one* of the ~4.8 activities a company authorises,
+   * and `matchingCaen` picks whichever one satisfied this run's `--caen`
+   * filter. That is right for a first import and wrong for a second: importing
+   * Bucharest wholesale after Bucharest software rewrote 15,000 consultancies
+   * and agencies from divisions 70/71/73/82 to 46/47/68 — codes they really do
+   * authorise, but not the ones any existing agent was targeting them by. The
+   * companies stayed; they left their ICP silently.
+   *
+   * So a stored CAEN wins. ANAF's is more truthful still — it is the activity
+   * the company actually *files* under — and `enrich:registry` overwrites this
+   * deliberately for that reason.
+   *
+   * The real fix is an array column holding every authorised code, with the ICP
+   * filter matching against it. Until then, first write wins.
+   */
+  const keepCaen = await companiesWithCaen(
+    supabase,
+    ready.map(({ company }) => company.cui).filter((cui): cui is string => Boolean(cui)),
+  );
+  if (keepCaen.size > 0) {
+    console.log(`Keeping the CAEN already stored for ${keepCaen.size} known companies`);
+  }
+
   let written = 0;
   for (let i = 0; i < ready.length; i += BATCH_SIZE) {
     const batch = ready.slice(i, i + BATCH_SIZE).map(({ company, onrcStatus }) => ({
@@ -614,8 +640,10 @@ async function writeAll(
       city: company.city ?? null,
       reg_com: company.regCom ?? null,
       legal_form: company.legalForm ?? null,
-      caen: company.caen ?? null,
-      caen_label: company.caenLabel ?? null,
+      // `undefined` is omitted from the payload, so PostgREST leaves the stored
+      // value alone. `null` would blank it.
+      caen: keepCaen.has(company.cui ?? "") ? undefined : (company.caen ?? null),
+      caen_label: keepCaen.has(company.cui ?? "") ? undefined : (company.caenLabel ?? null),
       onrc_status: onrcStatus ?? null,
       registration_date: company.registrationDate ?? null,
       source: company.source,
@@ -651,6 +679,47 @@ async function writeAll(
  * be worse: it exists so that a crawler and a registry import can recognise the
  * same company, and a duplicated domain quietly breaks that.
  */
+/**
+ * The CUIs we already hold a CAEN for.
+ *
+ * Chunked because `in` with tens of thousands of values is a URL PostgREST
+ * refuses, and read in one pass rather than per batch so a 135,000-row import
+ * costs a few hundred round trips instead of a few hundred thousand.
+ */
+async function companiesWithCaen(
+  supabase: SupabaseClient,
+  cuis: readonly string[],
+): Promise<Set<string>> {
+  const known = new Set<string>();
+  const unique = [...new Set(cuis)];
+
+  for (let i = 0; i < unique.length; i += 200) {
+    const { data, error } = await supabase
+      .from("companies")
+      .select("cui")
+      .not("caen", "is", null)
+      .in("cui", unique.slice(i, i + 200));
+
+    if (error) {
+      /*
+       * Fail toward *not* overwriting. A read failure here would otherwise let
+       * the import rewrite every stored CAEN, which is the exact damage this
+       * function exists to prevent — and it would do it silently.
+       */
+      console.error(
+        `Could not check existing CAENs (${error.message}); ` +
+          "keeping every stored value rather than risking a rewrite.",
+      );
+      for (const cui of unique) known.add(cui);
+      return known;
+    }
+    for (const row of (data ?? []) as { cui: string | null }[]) {
+      if (row.cui) known.add(row.cui);
+    }
+  }
+  return known;
+}
+
 async function dropConflictingDomains(
   supabase: SupabaseClient,
   ready: { company: SourcedCompany; onrcStatus?: string }[],
