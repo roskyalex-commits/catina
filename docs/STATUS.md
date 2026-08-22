@@ -4,16 +4,20 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `d55cf73` — Romania imported, and the three bugs that found.
+- **Last commit:** `6188925` — Bucharest deepened; two import bugs found and fixed.
 - **Green:** 1,071 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
-- **Data:** **351,694 companies** across the 11 largest counties — 326,446
-  (92.8%) with a street address, **192,916 (54.9%) with a phone**, 125,622 VAT
-  registered, 56,982 on e-Factura, 47,881 flagged distressed, 326,735 (92.9%)
-  ANAF-enriched. **352,762 decision-makers.** **1,788 leads** across three
-  agents; 589 signals after the tech-stack repair.
-  **And 5,402 domains — 1.5%.** That number did not move when the company count
-  went up twentyfold, and it is the whole problem. See "Romania, not Cluj".
-- **Database:** 304 MB of the 500 MB free tier.
+- **Data:** **421,023 companies**, Bucharest-heavy by design — 149,721 of the
+  city's 182,030 in our ICP divisions (82%). **192,916 (54.9%) with a phone**,
+  **352,762 decision-makers**, **2,667 leads** across four agents.
+  **And 5,402 domains — 1.3%.** That number has not moved across two imports
+  totalling 543,000 companies, and it is the whole problem: 99% of every email
+  we hold was crawled off a site we already had the domain for. See "Where the
+  email addresses actually came from".
+- **Database:** 328 MB of the 500 MB free tier — ~170 MB headroom, ~200k
+  companies at the measured 844 B each.
+- **Blocked on money, both confirmed by probing:** Reoon returns
+  `403 Not enough credits` (**$24** unblocks 7,210 queued people); the Apify
+  free credit is spent at **$4.80 of $5** and resets monthly.
 
 ### The one number that matters, and it is not a data-source problem
 
@@ -232,6 +236,123 @@ afterwards and dropped 9,547 of them — measured at 91% on a real run, over hal
 of it to `--active-only`. It now over-reads by `LIMIT_OVERSHOOT` and truncates
 at the end, so the number given is an upper bound on rows written, and a run
 that still comes up short says so.
+
+## What to do next, and what it costs
+
+### Free, and not yet done
+
+1. **`enrich:registry --skip-financials`** — running. Repairs the 52,983 blanked
+   CAENs and gives the 69,329 new companies phone, address, VAT, e-Factura and
+   legal form. ~100 CUIs per request, about an hour.
+2. **`import:reps`** — decision-makers for the new companies, from
+   `od_reprezentanti_legali.csv`.
+3. **`harvest:patterns`** — **2,319 domains have never been checked** for an
+   email convention. This is the only route to *personal* addresses that needs
+   no credits, and personal addresses are the point: we hold 1,947 role
+   addresses and 1,134 personal.
+4. **`source` + `rescore:leads`** — so the agents see the deepened Bucharest.
+   The Revnet agent has 879 leads from 23,306 matching companies and can keep
+   going.
+
+### $24, and it unblocks the biggest single win
+
+**Reoon lifetime credits, 25,000 for $24.** 7,210 people have resolved name
+halves at a company with a domain; three pattern guesses each is 21,630
+verifications, one pack. `PATTERNS_BY_PREVALENCE` reaches 87.4% of Romanian
+domains in its first three entries.
+
+Today: **1,134 personal addresses.** Report the real resolution rate rather than
+predicting it, and stop if verifications-per-address-won is worse than 5:1.
+
+### Waiting on next month's Apify credit, or $39
+
+`measure:maps` on Bucharest is written and blocked. It matters because the join,
+not the scraping, is the lever: 84% of the domains Maps returned in Cluj were
+discarded for want of a company to attach them to, and Bucharest now holds
+149,721 companies against Cluj's 33,454. The yield should be materially better —
+and that is the number that decides whether to scale.
+
+### Designed and deliberately not built
+
+**Apify LinkedIn** ($3–10/1,000 profiles, actors with search modes and no cookie
+requirement — the gap Bright Data could not fill). We already hold 352,762
+names, so it buys **job titles and seniority**, not contacts, and 66% of lead
+companies are sole traders where `administrator` is already correct. Mirror
+`src/lib/sources/brightdata/`; `upsertPeople` is already the writer and already
+refuses to let a real title be overwritten by `administrator`.
+
+## Deepening Bucharest, and the two bugs it exposed
+
+The register import had gone *wide* — nine professional-services sectors across
+eleven counties — so every ICP saw a thin slice of its own sector. This filled
+in the sectors already held rather than adding new ones, so an agent run sees
+what it would if the whole 1.78M register were loaded.
+
+**Two runs, 195,000 companies, `--county B,IF --caen 46,47,55,56,62,68
+--legal-form SRL,SA,SRL-D --active-only`.** Bucharest in those divisions went
+from **47,797 of 182,030 (26%)** to **149,721 (82%)**. Database 305 → 328 MB.
+
+### Bug 1: a second import reclassified the first import's companies
+
+`companies.caen` holds **one** of the ~4.8 activities a company authorises, and
+`matchingCaen` stores whichever satisfied the current `--caen` filter — on
+purpose, so the code shown beside a matched company explains the match.
+
+That is right once. On a second import it silently moves companies between
+ICPs: **~15,000 rows left divisions 70, 71, 73 and 82 for 46, 47 and 68**. A
+consultancy that also authorises wholesale stopped being a consultancy, and
+every agent targeting `management_consulting` stopped finding it. Nothing was
+deleted; nothing logged.
+
+A stored CAEN now wins, and the lookup **fails toward not overwriting** — a read
+error keeps every stored value, because the alternative is doing the damage
+silently. ANAF still overwrites it and should: it writes the activity a company
+actually *files* under.
+
+> The real fix is an array column holding every authorised code, with the ICP
+> filter matching against it. Not built — it changes the sourcing query.
+
+### Bug 2: `undefined` does not omit a column from a *bulk* upsert
+
+The guard for Bug 1 did the opposite of its own log line. It printed *"Keeping
+the CAEN already stored for 52,982 known companies"* and **blanked 52,983
+CAENs**.
+
+`undefined` omits a key from a single-row update. It does not omit it from a
+batch: PostgREST needs one column set for the whole payload, so a key that other
+rows carry is written as NULL for the rows that leave it out.
+
+**How it was caught matters more than the bug.** Companies in the ICP divisions
+went **212,569 → 170,121** across a run that only inserts. *A count that falls
+after an insert-only operation is the signal* — it was nearly missed because the
+log line said the opposite and the run exited 0.
+
+Fixed by splitting each batch in two so every payload has a uniform column set.
+Repaired by clearing `last_enriched_at` on the damaged rows and letting
+`enrich:registry` re-visit them, which leaves ANAF's filed CAEN — better data
+than the import had stored.
+
+## Both paid steps are blocked, and both were confirmed rather than assumed
+
+**Reoon is at zero.** Probed directly:
+
+```
+HTTP 403  {"reason":"Not enough credits available. Please recharge."}
+```
+
+The ledger still reads 366/600. The vendor is the truth. **7,210 people** with
+resolved name halves at a company with a domain are queued and cannot move.
+**$24** buys 25,000 lifetime credits, which covers the whole backlog at three
+guesses each.
+
+**The Apify free tier is ~$10.50 per 1,000 places, not $1.50–4.** Measured: 454
+places in Cluj consumed **$4.80 of the $5**, and the Bucharest run was refused
+with `not-enough-usage-to-run-paid-actor`. The advertised rate is the *paid*
+tier; on free it bills platform usage against the same $5.
+
+So the free credit buys roughly **one county a month**, not the 3,000 places the
+headline implies, and the cost per new domain is **$0.083 free / $0.012–0.032
+paid** rather than the $0.024 quoted earlier from a $3/1,000 assumption.
 
 ## Where the email addresses actually came from
 
@@ -1427,6 +1548,27 @@ Out of scope until the above works: queue consumers, cron handlers, the
 unsubscribe endpoint, Copilot.
 
 ## Landmines
+
+- **`undefined` does not omit a column from a *bulk* upsert.** It omits it from
+  a single-row update, which is where the intuition comes from. In a batch,
+  PostgREST needs one column set for the whole payload, so a key that other rows
+  carry is written as **NULL** for the rows that leave it out. This blanked
+  52,983 CAENs while the run logged that it was keeping them. Split the batch so
+  every payload has a uniform column set.
+- **A count that falls after an insert-only operation is the signal.** That is
+  how the bug above was caught — companies in the ICP divisions went
+  212,569 → 170,121 across a run that only inserts. The log line said the
+  opposite and the process exited 0. Compare a before/after count on a column
+  the run touches, not just the row total.
+- **`companies.caen` is one of ~4.8 codes, chosen by the last import's filter.**
+  Re-importing with a different `--caen` moves companies between ICPs silently.
+  A stored CAEN now wins, but the underlying shape is unfixed: the right answer
+  is an array column of every authorised code with the ICP filter matching
+  against it.
+- **The Apify free tier is ~$10.50 per 1,000 places, not the advertised
+  $1.50–4.** That rate is for paid plans; free bills platform usage against the
+  same $5, so the month's credit is about one county. Read the `Apify credit:`
+  line the script prints before planning a run.
 
 - **Two sources, one column, no reconciliation — again.** `legal_form` was added,
   filtered on and tested against ONRC's codes (`SRL`). ANAF enrichment then wrote
