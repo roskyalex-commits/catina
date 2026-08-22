@@ -51,6 +51,21 @@ import { readFileSync } from "node:fs";
 import { requireEnv } from "./load-env";
 
 const BATCH_SIZE = 500;
+/**
+ * How many county matches to read per company `--limit` asks for.
+ *
+ * The CAEN and status joins run after the read and drop most of what reaches
+ * them: measured on the real file, 2,400 county matches became **208** imports
+ * — 91% gone, more than half of it to `--active-only` alone. A 1:1 read bound
+ * therefore under-delivers by an order of magnitude, which is how `--limit
+ * 10000` once wrote 1,513 companies.
+ *
+ * Fifteen covers the measured ratio with room to spare. It cannot be right for
+ * every filter combination — a narrow industry in a small county will still
+ * come up short — which is why the run says so explicitly when it does, rather
+ * than letting a short import look like a finished one.
+ */
+const LIMIT_OVERSHOOT = 15;
 const SAMPLE_ROWS = 8;
 const DRY_RUN_DEFAULT_ROWS = 2000;
 
@@ -153,7 +168,7 @@ function usage(): string {
     "  --industry <keys>    industry keys, expanded per CAEN revision",
     "  --caen <list>        4-digit codes or 2-digit divisions",
     "  --active-only        skip companies the register marks as not trading",
-    "  --limit <n>          stop after n matching companies",
+    "  --limit <n>          import at most n companies (after every filter)",
     "  --max-rows <n>       stop after reading n rows of OD_FIRME",
     "  --resume <n>         skip the first n rows of OD_FIRME",
     "  --dry-run            report and write nothing (no database needed)",
@@ -371,7 +386,18 @@ async function main() {
     }
     counts.matched += 1;
 
-    if (options.limit && counts.matched >= options.limit) break;
+    /*
+     * Over-read on purpose. `--limit` promises a number of *imported*
+     * companies, but only the county, legal-form and website filters can run
+     * here — CAEN and trading status need joins against two other files, which
+     * happen after this loop. Measured on a real run, those joins drop about
+     * 85% of what the county filter lets through, so stopping the read at
+     * `limit` delivered 1,513 companies for `--limit 10000`.
+     *
+     * The final truncation below is what makes `--limit` an honest upper bound;
+     * this factor just avoids reading 4.2M rows to fill a small one.
+     */
+    if (options.limit && counts.matched >= options.limit * LIMIT_OVERSHOOT) break;
     if (maxRows && counts.read >= maxRows) break;
   }
 
@@ -483,6 +509,16 @@ async function main() {
     ready.push({ company: entry.company, onrcStatus: label });
   }
 
+  /*
+   * `--limit` means "import at most this many", and it is enforced here rather
+   * than at the read because that is the only place the number is knowable.
+   */
+  let truncated = 0;
+  if (options.limit && ready.length > options.limit) {
+    truncated = ready.length - options.limit;
+    ready.length = options.limit;
+  }
+
   // --- report ----------------------------------------------------------------
   console.log("Rows read from OD_FIRME:", counts.read);
   console.log("Matched the county filter:", counts.matched);
@@ -496,7 +532,23 @@ async function main() {
         ? ` (no cui ${counts.missing_cui}, bad cui ${counts.invalid_cui}, no name ${counts.missing_name})`
         : ""),
   );
+  if (truncated) console.log(`Held back by --limit: ${truncated}`);
   console.log("Ready to import:", ready.length);
+
+  if (options.limit && ready.length < options.limit && !maxRows) {
+    /*
+     * Said out loud, because a short run looks identical to a finished one. It
+     * means the read stopped at `limit * LIMIT_OVERSHOOT` county matches before
+     * enough of them survived the joins — not that the slice is exhausted.
+     */
+    console.log(
+      `
+Only ${ready.length} of the ${options.limit} asked for survived the ` +
+        `CAEN and status joins.
+Raise --limit, or drop it and use --max-rows ` +
+        `to bound the read instead.`,
+    );
+  }
 
   if (counts.read > 0 && rejected / counts.read > 0.2) {
     console.log(
