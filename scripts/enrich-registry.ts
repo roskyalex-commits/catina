@@ -116,6 +116,7 @@ type Update = {
   insolvency_status?: string | null;
   address?: string | null;
   phone?: string | null;
+  legal_form?: string | null;
   revenue_ron?: number | null;
   revenue_prev_ron?: number | null;
   profit_ron?: number | null;
@@ -150,6 +151,14 @@ function updateFromCompany(id: string, company: AnafCompany): Update {
      */
     address: company.address ?? undefined,
     phone: company.phone ?? undefined,
+    /*
+     * The third field ANAF returned and we discarded, alongside `phone` and
+     * `address`. It separates a company from a sole trader, which is the
+     * difference between a decision-maker and a one-person business — and it
+     * backfills the column for every company imported before `--legal-form`
+     * existed.
+     */
+    legal_form: company.legalForm ?? undefined,
     last_enriched_at: new Date().toISOString(),
   };
 }
