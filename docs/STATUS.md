@@ -115,6 +115,92 @@ npm run enrich:emails -- --agent <id> --named   # chase the person, not office@
 npm run source -- --agent <id> --pages N        # size filters now actually apply
 ```
 
+## Romania, not Cluj: the census and what it changes
+
+The question that started this — "were the leads only from Cluj?" — has a
+two-part answer, and the second part is the important one.
+
+**The leads were never Cluj-only. The company database very nearly was.**
+
+| | Cluj | București | rest |
+|---|---|---|---|
+| leads (1,788) | 844 — 47.2% | 71 — 4.0% | 873 across 40 counties |
+| companies, before this work (17,156) | 11,993 — **69.9%** | 456 — 2.7% | 4,707 |
+| **trading companies that exist** | 95,956 | **349,229** | 1,332,789 |
+
+17,156 of **1,777,974** trading companies is **1.0% of Romania**. In Bucharest
+it was 456 of 349,229 — **0.13%**. Even Cluj was one company in eight. The lead
+pipeline was never the constraint; its input was.
+
+### The national census, measured on all 4,202,257 rows
+
+Scanned directly from `od_firme.csv` + `od_stare_firma.csv`. Re-derive with the
+scripts in the plan file rather than trusting these if the export changes.
+
+| | |
+|---|---|
+| rows in `od_firme` | 4,202,257 |
+| still trading (`funcțiune`, minus terminal codes) | **1,777,974** — 42.3% |
+| of those, SRL | 1,293,641 — 72.8% |
+| PFA | 328,995 — 18.5% |
+| II / IF | 140,296 — 7.9% |
+| SA | 7,408 — 0.4% |
+| **carry a website in the WEB column** | **10,510 rows; 6,131 still trading** |
+
+### The finding that shapes everything downstream
+
+**The register is exhausted as a source of websites.** 6,131 trading companies
+nationally carry one — **0.34%** — and we already held 5,406. Importing every
+company in Romania adds roughly **700 domains**.
+
+So the two tracks are independent and must not be confused:
+
+- **Breadth is free and ONRC-shaped.** Companies, named administrators, phones,
+  addresses, financials. It does *not* produce email.
+- **Domains need a different source entirely.** Only Google Maps has measured
+  as both cheap and plausibly broad; `measure:maps` is the gate.
+
+OpenStreetMap was checked and is dead: a live Overpass query returns **7,236**
+Romanian businesses with a website, nationally, in total.
+
+### What was imported
+
+`--county B,CJ,IF,TM,IS,BH,CT,BV,DJ,PH,AG --legal-form SRL,SA,SRL-D
+--industry software,it_infrastructure,marketing_agency,management_consulting,accounting_legal,engineering_architecture,hr_recruitment,media_publishing,business_support
+--active-only`
+
+The 11 largest counties, professional services and trade-adjacent sectors,
+companies only. Sized against the free tier before running: 796,600 trading
+SRL/SA live in those counties, and this slice is **348,044** of them.
+
+**Storage, measured rather than estimated.** 581 B/company at 18k rows,
+**412 B/company at 209k** — index overhead amortises, so the plan's 1,000–1,100
+estimate was more than double the truth. The whole slice is therefore ~143 MB of
+`companies` plus ~146 MB of representatives, inside the 500 MB free tier.
+
+### Joining an outside source back to the register
+
+Needed for Maps, and measured before being built on:
+
+- **Phone is nearly a primary key.** Of 11,302 distinct normalised numbers,
+  **10,763 identify exactly one company — 95.2%**. Worst case is 26 companies on
+  one number. 76.7% are mobile, which for an SRL is usually the administrator.
+- **A CUI printed on the website is 100% precise and 13% recall.** Of 38
+  reachable company sites whose CUI we already knew, 5 published one and **all
+  5 matched**. It confirms a match; it cannot make one.
+- Name-within-county is the fallback, and `companyMatches` already implements
+  it strictly enough — it refuses pairs sharing only `romania`, `trade` and the
+  like.
+
+### Landmine: `--limit` did not mean what it said
+
+`--limit 10000` imported **1,513 companies**. The flag stopped the *read* after
+10,000 rows passed the county filter, but the CAEN and status joins run
+afterwards and dropped 9,547 of them — measured at 91% on a real run, over half
+of it to `--active-only`. It now over-reads by `LIMIT_OVERSHOOT` and truncates
+at the end, so the number given is an upper bound on rows written, and a run
+that still comes up short says so.
+
 ## The outreach system
 
 Six modules — a Gmail client, a MIME builder, a drafter, a compliance
@@ -1175,6 +1261,27 @@ Out of scope until the above works: queue consumers, cron handlers, the
 unsubscribe endpoint, Copilot.
 
 ## Landmines
+
+- **`Boolean([])` is true, and it cost 574 fake signals.** `TechStackSignalSource`
+  gated its diff on `Boolean(context.previous?.techStack)`, so a first scan that
+  detected nothing let the next scan report the site's whole stack as newly
+  added. Proven per row before deleting: for **574 of 574**, `added` was
+  identical to the company's entire current stack. Check `.length`, not truthiness,
+  on any array that means "we have seen something before".
+- **A signal's title is the opening line of an email.** "Started using Apache"
+  passed every test, scored fine, rendered fine, and would have gone to 72
+  strangers. When a field is read verbatim by the drafter, "did it emit
+  something" is not the standard — "would a stranger believe a person wrote
+  this" is.
+- **`--limit` on the importer meant one filter out of four.** It bounded the
+  read at the county filter; the CAEN and status joins ran afterwards and
+  dropped 91%, so `--limit 10000` wrote 1,513. If a flag's name promises an
+  output count, enforce it where the output exists.
+- **Per-row storage estimates from a small table are roughly double.**
+  581 B/company at 18k rows, **412 B/company at 209k** — index overhead
+  amortises. Measure capacity at the scale you plan to run at, not at the scale
+  you happen to have. (And a bulk upsert over existing rows inflates the table
+  with dead tuples until autovacuum catches up, so re-measure after, not during.)
 
 - **`agents.is_active` is a plan-cap flag, not a statement about the agent.**
   `agent:toggle` flips it to free the free plan's single slot, and both agents
