@@ -1,5 +1,6 @@
 import { normaliseCui } from "@/lib/sources/anaf/client";
 import { caenLabel, isValidCaen } from "@/lib/sources/caen";
+import { canonicalLegalForm } from "@/lib/sources/legal-form";
 import type { SourcedCompany } from "@/lib/sources/types";
 import { normaliseHeader, type ColumnMap } from "./columns";
 
@@ -199,14 +200,15 @@ export function parseRow(row: string[], map: ColumnMap): ParsedRow {
 /**
  * Fold a legal form to compare it.
  *
- * The register writes `S.R.L.`, `SRL`, `Srl` and `SRL-D` for what a filter
- * means by "SRL". Punctuation and case come out; the `-D` does not, because a
- * `SRL-D` (debutant) is a genuinely different, younger company and a caller may
- * reasonably want one and not the other.
+ * Delegates to the shared vocabulary, because ANAF also fills this column and
+ * writes `SOCIETATE COMERCIALĂ CU RĂSPUNDERE LIMITATĂ` where ONRC writes `SRL`.
+ * See `src/lib/sources/legal-form.ts` for what that cost when they diverged.
+ *
+ * `SRL-D` stays distinct from `SRL`: a debutant SRL is a genuinely different,
+ * younger company and a caller may want one and not the other.
  */
 export function normaliseLegalForm(raw: string): string | undefined {
-  const value = raw.replace(/\./g, "").trim().toUpperCase();
-  return value || undefined;
+  return canonicalLegalForm(raw);
 }
 
 export type RowFilter = {

@@ -25,6 +25,7 @@
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { AnafClient, type AnafCompany } from "../src/lib/sources/anaf/client";
+import { canonicalLegalForm } from "../src/lib/sources/legal-form";
 import { requireEnv } from "./load-env";
 
 const VAT_BATCH = 100;
@@ -154,11 +155,14 @@ function updateFromCompany(id: string, company: AnafCompany): Update {
     /*
      * The third field ANAF returned and we discarded, alongside `phone` and
      * `address`. It separates a company from a sole trader, which is the
-     * difference between a decision-maker and a one-person business — and it
-     * backfills the column for every company imported before `--legal-form`
-     * existed.
+     * difference between a decision-maker and a one-person business.
+     *
+     * Written through `canonicalLegalForm`, and that is not decoration: ANAF
+     * writes `SOCIETATE COMERCIALĂ CU RĂSPUNDERE LIMITATĂ` where ONRC writes
+     * `SRL`. Storing it raw once already dropped `legal_form = 'SRL'` from
+     * 291,272 rows to 31,976 without an error anywhere.
      */
-    legal_form: company.legalForm ?? undefined,
+    legal_form: canonicalLegalForm(company.legalForm),
     last_enriched_at: new Date().toISOString(),
   };
 }
