@@ -34,6 +34,7 @@
     "build:industries": "tsx scripts/build-industries.ts",
     "build:given-names": "tsx scripts/build-given-names.ts",
     "repair:caen-labels": "tsx scripts/repair-caen-labels.ts",
+    "repair:tech-signals": "tsx scripts/repair-tech-signals.ts",
     "backfill:industries": "tsx scripts/backfill-industries.ts",
     "backfill:names": "tsx scripts/backfill-names.ts",
     "verify:onboarding": "tsx scripts/verify-onboarding.ts",

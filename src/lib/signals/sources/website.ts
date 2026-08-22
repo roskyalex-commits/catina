@@ -44,8 +44,18 @@ export class TechStackSignalSource implements SignalSource {
     "budget is moving in that category right now.";
 
   /**
-   * Technologies whose adoption implies real spend. Adding one of these is a
-   * much stronger signal than picking up an analytics tag.
+   * Technologies whose adoption implies real spend, and therefore a real signal.
+   *
+   * This set is now a **gate**, not a strength modifier. Everything outside it
+   * — Apache, nginx, PHP, WordPress, Cloudflare, Google Analytics — is on half
+   * the web, and its appearance says nothing about whether a company is buying.
+   *
+   * That distinction used to only shade the score, and the consequence was
+   * measured on real leads: **72 of 101 mid-market messages would have opened
+   * with "I saw you started using Apache"** — a line that is worse than
+   * generic, because it is both uninformative and slightly uncanny. The rule
+   * this product is built on is "no specific signal, no message", and a
+   * commodity web server is not a specific signal.
    */
   private static readonly HIGH_INTENT = new Set([
     "Shopify", "Magento", "WooCommerce", "PrestaShop", "Gomag", "MerchantPro",
@@ -54,14 +64,21 @@ export class TechStackSignalSource implements SignalSource {
   ]);
 
   isApplicable(context: SignalScanContext): boolean {
-    // Needs a previous scan to diff against — the first scan only records.
-    return Boolean(context.company.domain && context.previous?.techStack);
+    /*
+     * A *non-empty* previous stack, which is not what this used to check.
+     *
+     * `Boolean([])` is true, so a first scan that detected nothing passed the
+     * gate and then every technology on the site read as newly added. That is
+     * how 241 companies came to carry "Started using WordPress": not a change,
+     * a first observation wearing a change's clothes.
+     */
+    return Boolean(context.company.domain && context.previous?.techStack?.length);
   }
 
   async scan(context: SignalScanContext): Promise<Signal[]> {
     const domain = context.company.domain;
     const previous = context.previous?.techStack;
-    if (!domain || !previous) return [];
+    if (!domain || !previous?.length) return [];
 
     const snapshot = await siteFor(context);
     if (!snapshot) return [];
@@ -74,31 +91,42 @@ export class TechStackSignalSource implements SignalSource {
     const signals: Signal[] = [];
     const period = detectedAt.toISOString().slice(0, 10);
 
-    if (added.length > 0) {
-      const notable = added.filter((t) => TechStackSignalSource.HIGH_INTENT.has(t));
+    const addedNotable = added.filter((t) => TechStackSignalSource.HIGH_INTENT.has(t));
+    const removedNotable = removed.filter((t) => TechStackSignalSource.HIGH_INTENT.has(t));
+
+    if (addedNotable.length > 0) {
       signals.push({
         type: "tech_stack_added",
-        title: `Started using ${added.join(", ")}`,
+        /*
+         * Names the notable technology only. "Started using Apache, Google
+         * Analytics, WooCommerce, PHP, WordPress" buries the one word that
+         * mattered under four that did not, and this title is read verbatim by
+         * both the SIGNAL column and the message drafter.
+         */
+        title: `Started using ${addedNotable.join(", ")}`,
         evidenceUrl,
-        strength: notable.length > 0 ? 0.8 : 0.4,
+        strength: 0.8,
         detectedAt,
-        dedupeKey: `tech_added:${domain}:${added.sort().join(",")}`,
-        payload: { added, notable, period },
+        // Keyed on the notable set, so the same platform adoption dedupes even
+        // when an analytics tag arrives alongside it on a later scan.
+        dedupeKey: `tech_added:${domain}:${[...addedNotable].sort().join(",")}`,
+        // The full diff is kept in the payload: it is genuine evidence, it is
+        // just not something to open a cold email with.
+        payload: { added, notable: addedNotable, period },
       });
     }
 
-    if (removed.length > 0) {
-      const notable = removed.filter((t) => TechStackSignalSource.HIGH_INTENT.has(t));
+    if (removedNotable.length > 0) {
       signals.push({
         type: "tech_stack_removed",
-        title: `Stopped using ${removed.join(", ")}`,
+        title: `Stopped using ${removedNotable.join(", ")}`,
         evidenceUrl,
         // Dropping a paid platform means they are switching to something —
         // possibly you.
-        strength: notable.length > 0 ? 0.75 : 0.3,
+        strength: 0.75,
         detectedAt,
-        dedupeKey: `tech_removed:${domain}:${removed.sort().join(",")}`,
-        payload: { removed, notable, period },
+        dedupeKey: `tech_removed:${domain}:${[...removedNotable].sort().join(",")}`,
+        payload: { removed, notable: removedNotable, period },
       });
     }
 
