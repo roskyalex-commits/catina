@@ -16,24 +16,34 @@
  * simply stopped finding companies. Same shape as "CAEN is four registers
  * wearing one column" in docs/STATUS.md, reached from the other end.
  *
- * `canonicalLegalForm` is the fix going forward and every writer now goes
- * through it. This rewrites what is already stored.
+ * `canonicalLegalForm` is the fix going forward and every writer goes through
+ * it. This rewrites what is already stored.
+ *
+ * ## Why this one talks SQL and the other repairs do not
+ *
+ * Rewriting one column across 309,654 rows is a *set* operation. The first
+ * version did it the way every other script here does — read the rows over
+ * PostgREST, map them in JavaScript, send an `UPDATE … WHERE id = ?` per row —
+ * and that is 309,654 HTTP round trips for a change Postgres can make in a
+ * single statement per distinct value. It was still running after twenty
+ * minutes, and it starved every other query on the free tier while it did.
+ *
+ * `DATABASE_URL` is already how migrations run, so this is not a new access
+ * path, just the right one for the shape of the work. Read scripts keep using
+ * PostgREST; a bulk column rewrite should not.
  *
  * ## What it clears rather than maps
  *
  * ANAF files `ALTE FORME JURIDICE` for 802 companies and `N/A` for 52, plus an
  * empty string for 47,348. None of those is a legal form. They become null,
- * because `--legal-form` excludes unknowns on purpose — a value that records
- * "we do not know" must not be mistaken for one that records an answer.
+ * because `--legal-form` excludes unknowns on purpose — a value recording "we
+ * do not know" must not read as one recording an answer.
  *
- * Idempotent: a second run finds nothing to change.
+ * Idempotent: a second run reports nothing to change.
  */
-import { createClient } from "@supabase/supabase-js";
+import postgres from "postgres";
 import { canonicalLegalForm } from "../src/lib/sources/legal-form";
 import { requireEnv } from "./load-env";
-
-const PAGE = 1000;
-const WRITE_BATCH = 200;
 
 type Options = { dryRun: boolean };
 
@@ -51,106 +61,69 @@ function parseArgs(argv: string[]): Options {
   return options;
 }
 
-const db = createClient(
-  requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
-  requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
-  { auth: { persistSession: false, autoRefreshToken: false } },
-);
-
-type Row = { id: string; legal_form: string | null };
-
-/**
- * Read every company that has a legal form, by keyset rather than by offset.
- *
- * PostgREST turns `.range(n, n + 999)` into `OFFSET n LIMIT 1000`, and Postgres
- * walks and discards those n rows on every page. Across 351,694 companies that
- * is quadratic, and it does not degrade gracefully — the first attempt at this
- * repair died with `canceling statement due to statement timeout` somewhere
- * past offset 300,000, having written nothing.
- *
- * `.gt("id", cursor)` is a range scan on the primary key: the same cost per
- * page whatever the table size. `AnafAdapter` already pages this way.
- */
-async function readAll(): Promise<Row[]> {
-  const rows: Row[] = [];
-  let cursor: string | undefined;
-
-  for (;;) {
-    let query = db
-      .from("companies")
-      .select("id, legal_form")
-      .not("legal_form", "is", null)
-      .order("id", { ascending: true })
-      .limit(PAGE);
-
-    if (cursor) query = query.gt("id", cursor);
-
-    const { data, error } = await query;
-    if (error) {
-      console.error(`Could not read companies: ${error.message}`);
-      process.exit(1);
-    }
-
-    const batch = (data ?? []) as Row[];
-    rows.push(...batch);
-    if (batch.length < PAGE) break;
-
-    cursor = batch[batch.length - 1].id;
-    if (rows.length % 50_000 === 0) console.log(`  read ${rows.length}`);
-  }
-  return rows;
-}
-
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const rows = await readAll();
 
-  console.log(`${rows.length} companies with a legal form on file\n`);
+  const sql = postgres(
+    requireEnv("DATABASE_URL", "The same connection string db:migrate uses."),
+    { ssl: "require", max: 1 },
+  );
 
-  const fixes: { id: string; legal_form: string | null }[] = [];
-  const moves = new Map<string, number>();
+  try {
+    /*
+     * One row per distinct value, not per company. There are 28 of them across
+     * 351,694 companies, so the decision about what each becomes is made 28
+     * times in JavaScript and applied 28 times in SQL.
+     */
+    const distinct = await sql<{ legal_form: string | null; n: number }[]>`
+      select legal_form, count(*)::int as n
+      from companies
+      where legal_form is not null
+      group by legal_form
+      order by n desc
+    `;
 
-  for (const row of rows) {
-    const wanted = canonicalLegalForm(row.legal_form) ?? null;
-    if (wanted === row.legal_form) continue;
-    fixes.push({ id: row.id, legal_form: wanted });
-    const key = `${row.legal_form ?? "(null)"} -> ${wanted ?? "(cleared)"}`;
-    moves.set(key, (moves.get(key) ?? 0) + 1);
-  }
+    const changes = distinct
+      .map((row) => ({
+        from: row.legal_form,
+        to: canonicalLegalForm(row.legal_form) ?? null,
+        n: row.n,
+      }))
+      .filter((change) => change.to !== change.from);
 
-  console.log(`${fixes.length} to change:\n`);
-  for (const [move, count] of [...moves].sort((a, b) => b[1] - a[1]).slice(0, 20)) {
-    console.log(`  ${String(count).padStart(7)}  ${move.slice(0, 74)}`);
-  }
+    const total = changes.reduce((sum, change) => sum + change.n, 0);
 
-  if (options.dryRun) {
-    console.log("\n--dry-run: nothing was written.");
-    return;
-  }
-  if (fixes.length === 0) {
-    console.log("\nNothing to do.");
-    return;
-  }
-
-  let written = 0;
-  for (let i = 0; i < fixes.length; i += WRITE_BATCH) {
-    const batch = fixes.slice(i, i + WRITE_BATCH);
-    const results = await Promise.all(
-      batch.map((fix) =>
-        db.from("companies").update({ legal_form: fix.legal_form }).eq("id", fix.id),
-      ),
-    );
-    const failed = results.find((result) => result.error);
-    if (failed?.error) {
-      console.error(`\nWrite failed at ${i}: ${failed.error.message}`);
-      console.error(`Wrote ${written} before failing. Re-running is safe.`);
-      process.exit(1);
+    console.log(`${distinct.length} distinct values across the column\n`);
+    console.log(`${total} rows to change, in ${changes.length} statements:\n`);
+    for (const change of changes) {
+      const label = `${change.from === "" ? "(empty)" : change.from} -> ${change.to ?? "(cleared)"}`;
+      console.log(`  ${String(change.n).padStart(7)}  ${label.slice(0, 74)}`);
     }
-    written += batch.length;
-    if (written % 20_000 === 0) console.log(`  wrote ${written}/${fixes.length}`);
-  }
 
-  console.log(`\n${written} rows folded back to one vocabulary.`);
+    if (options.dryRun) {
+      console.log("\n--dry-run: nothing was written.");
+      return;
+    }
+    if (changes.length === 0) {
+      console.log("Nothing to do.");
+      return;
+    }
+
+    let written = 0;
+    for (const change of changes) {
+      const result = await sql`
+        update companies
+        set legal_form = ${change.to}
+        where legal_form = ${change.from}
+      `;
+      written += result.count;
+      console.log(`  ${String(result.count).padStart(7)}  ${change.from === "" ? "(empty)" : change.from}`);
+    }
+
+    console.log(`\n${written} rows folded back to one vocabulary.`);
+  } finally {
+    await sql.end();
+  }
 }
 
 main();
