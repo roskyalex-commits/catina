@@ -57,6 +57,7 @@ import {
   type MapsPlace,
 } from "../src/lib/sources/maps/client";
 import { RegistryIndex, type RegistryCompany } from "../src/lib/sources/maps/match";
+import { readAllByKeyset } from "../src/lib/supabase/paginate";
 import { requireEnv } from "./load-env";
 
 const DEFAULT_LIMIT = 100;
@@ -126,30 +127,26 @@ const db = createClient(
 
 const maps = new MapsClient(process.env.APIFY_TOKEN);
 
-/** Every company we hold in the county being searched. */
+/**
+ * Every company we hold in the county being searched.
+ *
+ * Keyset, not `.range(offset, …)`. Bucharest alone is 149,721 rows now, and
+ * offset paging over that is quadratic — the same thing that killed the
+ * legal-form repair with a statement timeout. See `src/lib/supabase/paginate.ts`.
+ */
 async function loadRegistry(county: string): Promise<RegistryCompany[]> {
-  const rows: RegistryCompany[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await db
-      .from("companies")
-      .select("id, name, county, phone, domain")
-      .eq("county", county)
-      .range(from, from + PAGE - 1);
-
-    if (error) throw new Error(`companies: ${error.message}`);
-    const batch = (data ?? []) as Record<string, unknown>[];
-    rows.push(
-      ...batch.map((row) => ({
-        id: String(row.id),
-        name: String(row.name ?? ""),
-        county: (row.county as string) ?? null,
-        phone: (row.phone as string) ?? null,
-        domain: (row.domain as string) ?? null,
-      })),
-    );
-    if (batch.length < PAGE) break;
-  }
-  return rows;
+  return readAllByKeyset<RegistryCompany>({
+    query: () =>
+      db
+        .from("companies")
+        .select("id, name, county, phone, domain")
+        .eq("county", county) as never,
+    cursorOf: (row) => row.id,
+    pageSize: PAGE,
+    onPage: (total) => {
+      if (total % 25_000 === 0) console.log(`  read ${total} companies`);
+    },
+  });
 }
 
 function pct(part: number, total: number): string {
@@ -308,7 +305,8 @@ async function main() {
   const costPerDomain = (perThousand / 1000 / (newDomain / total)).toFixed(3);
   console.log(
     `${((newDomain / total) * 100).toFixed(1)}% of places produced a domain for a company we could not\n` +
-      `previously reach — about $${costPerDomain} per new domain at $${perThousand}/1,000 places.\n\n` +
+      `previously reach — about $${costPerDomain} per new domain at the free tier's\n` +
+      `~$${perThousand}/1,000. A paid tier at $1.50-4/1,000 divides that by three to seven.\n\n` +
       `Against the funnel's own measured rates, 1,000 new domains yield roughly\n` +
       `282 role addresses and 86 personal ones before any verification spend.`,
   );
