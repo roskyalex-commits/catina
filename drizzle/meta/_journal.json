@@ -57,6 +57,13 @@
       "when": 1787287237174,
       "tag": "0007_abnormal_grandmaster",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787372720429,
+      "tag": "0008_graceful_tarantula",
+      "breakpoints": true
     }
   ]
 }

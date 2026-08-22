@@ -425,6 +425,43 @@ describe("matchesFilter", () => {
     expect(matchesFilter(noCaen, undefined, { caen: ["6201"] })).toBe(false);
   });
 
+  it("keeps only the legal forms asked for", () => {
+    /*
+     * The lever that separates a company from a sole trader. A quarter of the
+     * register — 328,995 PFA and 114,171 II — is one person trading under their
+     * own name, where "administrator" is the whole business rather than a
+     * decision-maker inside one.
+     */
+    const srl = { ...company, legalForm: "SRL" };
+    const pfa = { ...company, legalForm: "PFA" };
+    expect(matchesFilter(srl, undefined, { legalForm: ["SRL", "SA"] })).toBe(true);
+    expect(matchesFilter(pfa, undefined, { legalForm: ["SRL", "SA"] })).toBe(false);
+  });
+
+  it("ignores the punctuation the register writes the form with", () => {
+    // `S.R.L.`, `SRL` and `Srl` are all the same thing in the file.
+    const dotted = { ...company, legalForm: "SRL" };
+    expect(matchesFilter(dotted, undefined, { legalForm: ["S.R.L."] })).toBe(true);
+    expect(matchesFilter(dotted, undefined, { legalForm: ["srl"] })).toBe(true);
+  });
+
+  it("excludes a company whose legal form is unknown", () => {
+    /*
+     * Excluding, not admitting. The filter exists to keep sole traders out, and
+     * an unrecorded form is exactly the case where letting it through would
+     * defeat the point of setting it.
+     */
+    expect(matchesFilter(company, undefined, { legalForm: ["SRL"] })).toBe(false);
+  });
+
+  it("does not distinguish SRL-D from SRL unless asked to", () => {
+    // A debutant SRL is a genuinely different, younger company. A caller who
+    // wants both says so; one who writes "SRL" gets SRL.
+    const debutant = { ...company, legalForm: "SRL-D" };
+    expect(matchesFilter(debutant, undefined, { legalForm: ["SRL"] })).toBe(false);
+    expect(matchesFilter(debutant, undefined, { legalForm: ["SRL", "SRL-D"] })).toBe(true);
+  });
+
   it("matches a county given as a code or an unaccented name", () => {
     expect(matchesFilter(company, undefined, { county: ["CJ"] })).toBe(true);
     expect(matchesFilter(company, undefined, { county: ["cluj"] })).toBe(true);

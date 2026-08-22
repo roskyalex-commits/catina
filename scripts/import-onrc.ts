@@ -44,6 +44,7 @@ import {
   statusLabel,
   type CaenEntry,
 } from "../src/lib/sources/onrc/join";
+import { INDUSTRY_KEYS, industryByKey, naceCodesFor } from "../src/lib/icp/industries";
 import { matchesFilter, parseRow, type RowFilter } from "../src/lib/sources/onrc/parse";
 import type { SourcedCompany } from "../src/lib/sources/types";
 import { readFileSync } from "node:fs";
@@ -62,6 +63,8 @@ type Options = {
   maxRows?: number;
   limit?: number;
   resume: number;
+  /** Industry keys, expanded into `filter.caen` before the run starts. */
+  industries?: string[];
   filter: RowFilter;
 };
 
@@ -103,8 +106,24 @@ function parseArgs(argv: string[]): Options {
       case "--caen":
         options.filter.caen = list(next());
         break;
+      case "--industry":
+        /*
+         * Expanded through `naceCodesFor`, never typed by hand.
+         *
+         * The register carries four CAEN revisions at once and 453,883 rows are
+         * already on the 2025 codes, where `6201` (custom software) became
+         * `6210`. A literal code list silently halves its own reach the moment
+         * a company re-files. `industry-definitions.ts` holds prefixes and
+         * `build:industries` expands them per revision — that is the whole
+         * reason it exists.
+         */
+        options.industries = list(next());
+        break;
       case "--county":
         options.filter.county = list(next());
+        break;
+      case "--legal-form":
+        options.filter.legalForm = list(next());
         break;
       case "--active-only":
         options.filter.activeOnly = true;
@@ -130,6 +149,8 @@ function usage(): string {
     "  --nomenclator <dir>  folder holding N_CAEN.CSV and N_STARE_FIRMA.CSV",
     "",
     "  --county <list>      county names or codes (CJ,TM,B)",
+    "  --legal-form <list>  SRL,SA — excludes PFA/II sole traders",
+    "  --industry <keys>    industry keys, expanded per CAEN revision",
     "  --caen <list>        4-digit codes or 2-digit divisions",
     "  --active-only        skip companies the register marks as not trading",
     "  --limit <n>          stop after n matching companies",
@@ -183,6 +204,45 @@ async function main() {
         process.exit(1);
       }
     }
+  }
+
+  /*
+   * Industry keys become CAEN codes here, before anything is read.
+   *
+   * `naceCodesFor` returns every class the industry covers *across every live
+   * revision*, which is the point: the register has 2008 and 2025 codes side by
+   * side, and `6201` and `6210` are the same activity under each. Merged with
+   * any explicit `--caen`, so both can be given.
+   */
+  if (options.industries?.length) {
+    const unknown = options.industries.filter((key) => !industryByKey(key));
+    if (unknown.length) {
+      console.error(
+        `Unknown industry key(s): ${unknown.join(", ")}
+
+` +
+          `Available:
+  ${INDUSTRY_KEYS.join(", ")}`,
+      );
+      process.exit(1);
+    }
+
+    const codes = naceCodesFor(options.industries);
+    if (codes.length === 0) {
+      // A key that expands to nothing would silently import the whole register,
+      // because an empty `filter.caen` means "no CAEN filter" downstream.
+      console.error(
+        `Those industries expand to no CAEN codes. Run npm run build:industries ` +
+          `— the generated file may be stale or missing.`,
+      );
+      process.exit(1);
+    }
+
+    options.filter.caen = [...new Set([...(options.filter.caen ?? []), ...codes])];
+    console.log(
+      `Industries: ${options.industries.join(", ")} -> ${codes.length} CAEN codes
+`,
+    );
   }
 
   /*
@@ -501,6 +561,7 @@ async function writeAll(
       county: company.county ?? null,
       city: company.city ?? null,
       reg_com: company.regCom ?? null,
+      legal_form: company.legalForm ?? null,
       caen: company.caen ?? null,
       caen_label: company.caenLabel ?? null,
       onrc_status: onrcStatus ?? null,

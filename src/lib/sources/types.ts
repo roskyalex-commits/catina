@@ -27,6 +27,15 @@ export type SourcedCompany = {
   // --- Romania-specific registry fields ---
   cui?: string;
   regCom?: string;
+  /**
+   * `SRL`, `SA`, `PFA`, `II`, `IF` — the register's own `FORMA_JURIDICA`.
+   *
+   * Worth carrying because it separates a company from a sole trader, and the
+   * two are not the same prospect: 25% of the register is PFA/II/IF, where the
+   * "administrator" is the entire business. ANAF parses this too and it was
+   * being discarded, the same way `phone` and `address` were.
+   */
+  legalForm?: string;
   caen?: string;
   caenLabel?: string;
   vatRegistered?: boolean;

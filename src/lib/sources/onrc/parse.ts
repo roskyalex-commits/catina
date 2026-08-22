@@ -186,6 +186,9 @@ export function parseRow(row: string[], map: ColumnMap): ParsedRow {
   const regCom = at("regCom");
   if (regCom) company.regCom = regCom;
 
+  const legalForm = normaliseLegalForm(at("legalForm"));
+  if (legalForm) company.legalForm = legalForm;
+
   const registrationDate = parseRomanianDate(at("registrationDate"));
   if (registrationDate) company.registrationDate = registrationDate;
 
@@ -193,11 +196,33 @@ export function parseRow(row: string[], map: ColumnMap): ParsedRow {
   return status ? { ok: true, company, status } : { ok: true, company };
 }
 
+/**
+ * Fold a legal form to compare it.
+ *
+ * The register writes `S.R.L.`, `SRL`, `Srl` and `SRL-D` for what a filter
+ * means by "SRL". Punctuation and case come out; the `-D` does not, because a
+ * `SRL-D` (debutant) is a genuinely different, younger company and a caller may
+ * reasonably want one and not the other.
+ */
+export function normaliseLegalForm(raw: string): string | undefined {
+  const value = raw.replace(/\./g, "").trim().toUpperCase();
+  return value || undefined;
+}
+
 export type RowFilter = {
   /** 4-digit CAEN codes, or 2-digit divisions to match a whole division. */
   caen?: string[];
   /** County names or registration codes; matched canonically. */
   county?: string[];
+  /**
+   * Legal forms to keep, e.g. `["SRL", "SA"]`.
+   *
+   * The lever that separates companies from sole traders. Of the 1,777,974
+   * trading entities in the register, **328,995 are PFA and 114,171 are II** —
+   * a quarter of it — and for those the register's "administrator" is simply
+   * the person, not a decision-maker inside an organisation.
+   */
+  legalForm?: string[];
   /** Drop companies the register marks dissolved, radiated or insolvent. */
   activeOnly?: boolean;
   /**
@@ -232,6 +257,16 @@ export function matchesFilter(
       .map(canonicalCounty)
       .filter((name): name is string => Boolean(name));
     if (!company.county || !wanted.includes(company.county)) return false;
+  }
+
+  if (filter.legalForm?.length) {
+    const wanted = filter.legalForm
+      .map(normaliseLegalForm)
+      .filter((form): form is string => Boolean(form));
+    // No form recorded means we cannot say it matches. Excluding is right here:
+    // the filter exists to keep sole traders out, and "unknown" is exactly the
+    // case where letting it through would defeat that.
+    if (!company.legalForm || !wanted.includes(company.legalForm)) return false;
   }
 
   // Only an explicit "not trading" excludes. An unknown status is kept, since

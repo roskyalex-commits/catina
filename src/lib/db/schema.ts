@@ -245,6 +245,16 @@ export const companies = pgTable(
     // --- Romania-specific registry fields (ANAF / ONRC / BPI) ---
     cui: text("cui"),
     regCom: text("reg_com"),
+    /**
+     * `SRL`, `SA`, `PFA`, `II`, `IF` — from ONRC's `FORMA_JURIDICA`, and also
+     * returned by ANAF and discarded until now.
+     *
+     * The field that tells a company from a sole trader. Nationally, 328,995
+     * trading entities are PFA and 114,171 are II — a quarter of the register —
+     * and for those the "administrator" is the whole business rather than a
+     * decision-maker inside one. Targeting cannot tell them apart without this.
+     */
+    legalForm: text("legal_form"),
     caen: text("caen"),
     caenLabel: text("caen_label"),
     vatRegistered: boolean("vat_registered"),
