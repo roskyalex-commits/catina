@@ -59,28 +59,51 @@ const db = createClient(
 
 type Row = { id: string; legal_form: string | null };
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
-
+/**
+ * Read every company that has a legal form, by keyset rather than by offset.
+ *
+ * PostgREST turns `.range(n, n + 999)` into `OFFSET n LIMIT 1000`, and Postgres
+ * walks and discards those n rows on every page. Across 351,694 companies that
+ * is quadratic, and it does not degrade gracefully — the first attempt at this
+ * repair died with `canceling statement due to statement timeout` somewhere
+ * past offset 300,000, having written nothing.
+ *
+ * `.gt("id", cursor)` is a range scan on the primary key: the same cost per
+ * page whatever the table size. `AnafAdapter` already pages this way.
+ */
+async function readAll(): Promise<Row[]> {
   const rows: Row[] = [];
-  // Paged: PostgREST caps a select at 1,000 rows silently, and a repair that
-  // sees a tenth of the table looks exactly like one that worked.
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await db
+  let cursor: string | undefined;
+
+  for (;;) {
+    let query = db
       .from("companies")
       .select("id, legal_form")
       .not("legal_form", "is", null)
       .order("id", { ascending: true })
-      .range(from, from + PAGE - 1);
+      .limit(PAGE);
 
+    if (cursor) query = query.gt("id", cursor);
+
+    const { data, error } = await query;
     if (error) {
       console.error(`Could not read companies: ${error.message}`);
       process.exit(1);
     }
+
     const batch = (data ?? []) as Row[];
     rows.push(...batch);
     if (batch.length < PAGE) break;
+
+    cursor = batch[batch.length - 1].id;
+    if (rows.length % 50_000 === 0) console.log(`  read ${rows.length}`);
   }
+  return rows;
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  const rows = await readAll();
 
   console.log(`${rows.length} companies with a legal form on file\n`);
 
@@ -105,7 +128,7 @@ async function main() {
     return;
   }
   if (fixes.length === 0) {
-    console.log("Nothing to do.");
+    console.log("\nNothing to do.");
     return;
   }
 
@@ -124,10 +147,10 @@ async function main() {
       process.exit(1);
     }
     written += batch.length;
-    process.stdout.write(`\r  ${written}/${fixes.length}`);
+    if (written % 20_000 === 0) console.log(`  wrote ${written}/${fixes.length}`);
   }
 
-  console.log(`\n\n${written} rows folded back to one vocabulary.`);
+  console.log(`\n${written} rows folded back to one vocabulary.`);
 }
 
 main();

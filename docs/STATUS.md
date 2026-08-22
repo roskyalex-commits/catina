@@ -192,6 +192,36 @@ Needed for Maps, and measured before being built on:
   it strictly enough — it refuses pairs sharing only `romania`, `trade` and the
   like.
 
+### Offset paging broke the day the table got big
+
+`.range(n, n + 999)` becomes `OFFSET n LIMIT 1000`, and Postgres walks and
+discards those `n` rows on **every** page. Total work is O(rows²). At 17,156
+companies nobody notices. At **351,694** a full-table scan dies with
+`canceling statement due to statement timeout` somewhere past offset 300,000 —
+and nothing in that message points at pagination.
+
+`src/lib/supabase/paginate.ts` (`readAllByKeyset`) is the fix, and
+`AnafAdapter` was already doing it by hand: ask for "the next 1,000 rows after
+this id", which is a range scan on the primary key at constant cost per page.
+
+**Twenty call sites still use `.range(from, …)`.** Most are fine — a bounded
+`--limit` measurement or a filtered slice that cannot grow. These are the ones
+that scan a whole large table and will time out:
+
+| script | table | note |
+|---|---|---|
+| `repair-caen-labels.ts` | companies | full scan, 351k |
+| `backfill-names.ts` | people | full scan, 352k |
+| `build-given-names.ts` | people | full scan, 352k |
+| `harvest-patterns.ts` | companies | three separate scans |
+| `discover-domains.ts` | companies | two scans |
+| `scan-signals.ts` | companies | one bounded, one not |
+
+`enrich-registry.ts` and `import-representatives.ts` both survived the 348k run,
+so the threshold is somewhere above them rather than at any of them exactly.
+Convert on contact rather than pre-emptively, but convert — a script that has
+"worked for months" is not evidence at this size.
+
 ### Landmine: `--limit` did not mean what it said
 
 `--limit 10000` imported **1,513 companies**. The flag stopped the *read* after
