@@ -4,14 +4,16 @@ Written for whoever (human or agent) picks this up next, so nothing has to be
 re-explained or re-derived. Update it when the answers change.
 
 - **Branch:** `main`, pushed to `github.com/roskyalex-commits/catina`.
-- **Last commit:** `5a97361` — the outreach system, wired to the app.
-- **Green:** 1,023 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
-- **Data:** **17,156 companies** — 5,406 with a website, **16,850 (98.2%) with a
-  street address** and **12,097 (70.5%) with a phone number** — ANAF stores an
-  empty string, not null, for the other 4,753, so `not null` overcounts it.
-  9,455 enriched from ANAF. **29,551
-  decision-makers**, all with `first_name`/`last_name` resolved. **1,788 leads**
-  across two agents, **1,094 signals** on 788 companies, best lead **91**.
+- **Last commit:** `d55cf73` — Romania imported, and the three bugs that found.
+- **Green:** 1,071 tests, clean `typecheck` and `lint`, plus 22 live checks in `verify:onboarding` and 4 in `verify:llm`.
+- **Data:** **351,694 companies** across the 11 largest counties — 326,446
+  (92.8%) with a street address, **192,916 (54.9%) with a phone**, 125,622 VAT
+  registered, 56,982 on e-Factura, 47,881 flagged distressed, 326,735 (92.9%)
+  ANAF-enriched. **352,762 decision-makers.** **1,788 leads** across three
+  agents; 589 signals after the tech-stack repair.
+  **And 5,402 domains — 1.5%.** That number did not move when the company count
+  went up twentyfold, and it is the whole problem. See "Romania, not Cluj".
+- **Database:** 304 MB of the 500 MB free tier.
 
 ### The one number that matters, and it is not a data-source problem
 
@@ -1291,6 +1293,23 @@ Out of scope until the above works: queue consumers, cron handlers, the
 unsubscribe endpoint, Copilot.
 
 ## Landmines
+
+- **Two sources, one column, no reconciliation — again.** `legal_form` was added,
+  filtered on and tested against ONRC's codes (`SRL`). ANAF enrichment then wrote
+  `SOCIETATE COMERCIALĂ CU RĂSPUNDERE LIMITATĂ` into the same column, and
+  `legal_form = 'SRL'` fell from **291,272 rows to 31,976** with no error
+  anywhere. `canonicalLegalForm` is now the only writer, and it **refuses to
+  store a phrase it does not recognise** — storing the unknown raw is exactly how
+  the column went bilingual. Before pointing a second source at any column, look
+  at what it writes.
+- **A bulk column rewrite is a set operation, not 309,654 HTTP requests.** The
+  first repair did it row by row over PostgREST and was still running after
+  twenty minutes, starving every other query on the free tier. There are 28
+  distinct values across 351,694 rows: 13 SQL statements, 1m48s. `DATABASE_URL`
+  is already how migrations run.
+- **`count: "exact"` on a large filtered table times out too.** The probes I
+  wrote to watch the repair started failing with empty error bodies. Use SQL
+  `count(*) filter (where …)` for anything at this scale.
 
 - **`Boolean([])` is true, and it cost 574 fake signals.** `TechStackSignalSource`
   gated its diff on `Boolean(context.previous?.techStack)`, so a first scan that
